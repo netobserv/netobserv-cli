@@ -130,6 +130,8 @@ github.com/kr/text v0.2.0 h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=
 github.com/kr/text v0.2.0/go.mod h1:eLer722TekiGuMkidMxC/pM04lWEeraHUUmBw8l2grE=
 github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0SNc=
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
+github.com/leandroberetta/flowlogs-pipeline v0.0.0-20260810170916-6c5c94ab0294 h1:HA1ZQgbVR+uO+3m0cOW5mUBYukhtWvzW89uk4gZR0D4=
+github.com/leandroberetta/flowlogs-pipeline v0.0.0-20260810170916-6c5c94ab0294/go.mod h1:C3zAnqPj2S2k8O6jXBTJ58KiL8ANj0EdLZaK7U7ddzg=
 github.com/lucasb-eyer/go-colorful v1.3.0 h1:2/yBRLdWBZKrf7gB40FoiKfAWYQ0lqNcbuQwVHXptag=
 github.com/lucasb-eyer/go-colorful v1.3.0/go.mod h1:R4dSotOR9KMtayYi1e77YzuveK+i7ruzyGqttikkLy0=
 github.com/mariomac/guara v0.0.0-20250408105519-1e4dbdfb7136 h1:SOKpjp57SUaZeXPA+wIXTIDByfs65cr1FamFsjzT8Ic=
@@ -156,8 +158,6 @@ github.com/mxk/go-flowrate v0.0.0-20140419014527-cca7078d478f h1:y5//uYreIhSUg3J
 github.com/mxk/go-flowrate v0.0.0-20140419014527-cca7078d478f/go.mod h1:ZdcZmHo+o7JKHSa8/e818NopupXU1YMK5fe1lsApnBw=
 github.com/navidys/tvxwidgets v0.14.0 h1:8UDKTDbbQeWwmOBcsTzKTrUYv7BpGYphpib7zWt6i6s=
 github.com/navidys/tvxwidgets v0.14.0/go.mod h1:yILrJRJqf399gw7JyUM7UdT+e9PMMDXpk+CuIoqvEj8=
-github.com/netobserv/flowlogs-pipeline v1.12.0-community h1:+RDxtVHY//wOqHh3Q+Xq/q3rQpuOQ0y+zPS4awnZOLE=
-github.com/netobserv/flowlogs-pipeline v1.12.0-community/go.mod h1:rLbF9BWm9s7EXpUXF7fztfrikvrIu1mzEOy/UPqZlLM=
 github.com/netobserv/netobserv-ebpf-agent v1.12.0-community h1:3e18pZzZPjRSm9TPECquVFf/4ntSjpVrb32pmJ8sAT8=
 github.com/netobserv/netobserv-ebpf-agent v1.12.0-community/go.mod h1:ML3ApiUVk+ROiB/oJ6v48PxIVhE9hAt955+oE+q20JM=
 github.com/onsi/ginkgo/v2 v2.32.1 h1:6tlvcDm/3sE8lGJbZ4+d4mO3RLy24/tQWOFzVSQNIfw=

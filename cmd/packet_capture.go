@@ -70,7 +70,7 @@ func startPacketCollector() {
 	log.Trace("Wrote pcap section header & interface")
 
 	flowPackets := make(chan *genericmap.Flow, 100)
-	collector, err := grpc.StartCollector(port, flowPackets)
+	collector, err := grpc.StartCollector(port, flowPackets, collectorTLSOptions()...)
 	if err != nil {
 		log.Error("StartCollector failed", err)
 		return

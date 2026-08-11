@@ -204,12 +204,24 @@ if [[ "$command" == "flows" || "$command" == "packets" || "$command" == "metrics
   fi
   
   # override extra configs
-  overrides="'{\"spec\":{\"serviceAccount\": \"netobserv-cli\"}}'"
+  if [[ "$tlsEnabled" == "true" ]]; then
+    overrides="'{\"spec\":{\"serviceAccount\":\"netobserv-cli\",\"volumes\":[{\"name\":\"collector-tls\",\"secret\":{\"secretName\":\"collector-tls\"}}],\"containers\":[{\"name\":\"collector\",\"image\":\"$img\",\"volumeMounts\":[{\"name\":\"collector-tls\",\"mountPath\":\"/etc/collector-tls\",\"readOnly\":true}]}]}}'"
+  else
+    overrides="'{\"spec\":{\"serviceAccount\": \"netobserv-cli\"}}'"
+  fi
 
-  cmd="${K8S_CLI_BIN} run -n $namespace collector \\
-  --image=$img --image-pull-policy='Always' --restart='Never' \\
-  --overrides=$overrides \\
-  --command -- $runCommand"
+  if [[ "$tlsEnabled" == "true" ]]; then
+    cmd="${K8S_CLI_BIN} run -n $namespace collector \\
+    --image=$img --image-pull-policy='Always' --restart='Never' \\
+    --override-type=strategic \\
+    --overrides=$overrides \\
+    --command -- $runCommand"
+  else
+    cmd="${K8S_CLI_BIN} run -n $namespace collector \\
+    --image=$img --image-pull-policy='Always' --restart='Never' \\
+    --overrides=$overrides \\
+    --command -- $runCommand"
+  fi
 
   if [[ "$outputYAML" == "true" ]]; then
     if [[ "$command" == "flows" || "$command" == "packets" ]]; then
