@@ -8,7 +8,7 @@ require (
 	github.com/jpillora/sizestr v1.0.0
 	github.com/mattn/go-sqlite3 v1.14.50
 	github.com/navidys/tvxwidgets v0.14.0
-	github.com/netobserv/flowlogs-pipeline v1.12.0-community
+	github.com/netobserv/flowlogs-pipeline v1.12.0-community.0.20260901145451-c8613bab4412
 	github.com/netobserv/netobserv-ebpf-agent v1.12.0-community
 	github.com/onsi/ginkgo/v2 v2.32.1
 	github.com/onsi/gomega v1.43.0
@@ -108,5 +108,3 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2-0.20260122202528-d9cc6641c482 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
-
-replace github.com/netobserv/flowlogs-pipeline => github.com/leandroberetta/flowlogs-pipeline v0.0.0-20260810170916-6c5c94ab0294
