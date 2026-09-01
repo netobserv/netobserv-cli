@@ -155,10 +155,6 @@ function setMetricsPipelineConfig() {
   "$YQ_BIN" e --inplace " .spec.template.spec.containers[0].env[] |= select(.name == \"FLP_CONFIG\").value |= ($metricsPipelineConfigJSON | tojson)" "$1"
 }
 
-function isOpenShift() {
-  ${K8S_CLI_BIN} get clusterversion version &>/dev/null
-}
-
 function enableCollectorTLS() {
   # Add CA volume and mount to DaemonSet for FLP client TLS
   "$YQ_BIN" e --inplace '.spec.template.spec.containers[0].volumeMounts += [{"name":"collector-ca","mountPath":"/etc/collector-ca","readOnly":true}]' "$manifest"
@@ -194,10 +190,14 @@ function clusterIsReady() {
 }
 
 function checkClusterVersion() {
+  # isOCP is a global consumed later (e.g. to enable collector TLS): default to false and flip it to
+  # true once we confirm we're talking to an OpenShift cluster.
+  isOCP=false
   states=$(${K8S_CLI_BIN} get clusterversion version -o jsonpath='{.status.history[*].state}')
   if [[ -z "${states}" ]]; then
     echo "Can't check version since cluster is not OpenShift"
-  else 
+  else
+    isOCP=true
     versions=$(${K8S_CLI_BIN} get clusterversion version -o jsonpath='{.status.history[*].version}')
     version=""
 
@@ -400,7 +400,7 @@ function setup() {
   fi
 
   # Enable TLS on OpenShift for collector-based captures
-  if [[ "$outputYAML" == "false" ]] && isOpenShift && [[ "$command" = "flows" || "$command" = "packets" ]]; then
+  if [[ "$outputYAML" == "false" && "$isOCP" == "true" ]] && [[ "$command" = "flows" || "$command" = "packets" ]]; then
     tlsEnabled=true
     echo "OpenShift detected, enabling TLS for collector"
     enableCollectorTLS
@@ -417,21 +417,18 @@ function setup() {
   echo "creating service account"
   applyYAML "$saYAML"
 
-  if [ "$command" = "flows" ]; then
+  # Flows and packets captures both rely on the collector service (and its CA configmap when TLS is on)
+  if [[ "$command" = "flows" || "$command" = "packets" ]]; then
     echo "creating collector service"
     applyYAML "$collectorServiceYAML"
     if [[ "$tlsEnabled" == "true" ]]; then
       echo "creating CA configmap for TLS"
       createCAConfigMap
     fi
+  fi
+  if [ "$command" = "flows" ]; then
     echo "creating flow-capture agents"
   elif [ "$command" = "packets" ]; then
-    echo "creating collector service"
-    applyYAML "$collectorServiceYAML"
-    if [[ "$tlsEnabled" == "true" ]]; then
-      echo "creating CA configmap for TLS"
-      createCAConfigMap
-    fi
     echo "creating packet-capture agents"
   elif [ "$command" = "metrics" ]; then
     echo "creating service monitor"

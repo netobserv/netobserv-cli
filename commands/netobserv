@@ -210,18 +210,14 @@ if [[ "$command" == "flows" || "$command" == "packets" || "$command" == "metrics
     overrides="'{\"spec\":{\"serviceAccount\": \"netobserv-cli\"}}'"
   fi
 
+  overrideType=""
   if [[ "$tlsEnabled" == "true" ]]; then
-    cmd="${K8S_CLI_BIN} run -n $namespace collector \\
-    --image=$img --image-pull-policy='Always' --restart='Never' \\
-    --override-type=strategic \\
-    --overrides=$overrides \\
-    --command -- $runCommand"
-  else
-    cmd="${K8S_CLI_BIN} run -n $namespace collector \\
-    --image=$img --image-pull-policy='Always' --restart='Never' \\
-    --overrides=$overrides \\
-    --command -- $runCommand"
+    overrideType="--override-type=strategic"
   fi
+  cmd="${K8S_CLI_BIN} run -n $namespace collector \\
+    --image=$img --image-pull-policy='Always' --restart='Never' \\
+    $overrideType --overrides=$overrides \\
+    --command -- $runCommand"
 
   if [[ "$outputYAML" == "true" ]]; then
     if [[ "$command" == "flows" || "$command" == "packets" ]]; then
