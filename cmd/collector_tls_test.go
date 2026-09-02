@@ -86,6 +86,51 @@ func TestBuildCollectorTLSOptions(t *testing.T) {
 	})
 }
 
+func TestBuildCollectorTLSConfig(t *testing.T) {
+	t.Run("returns nil when the cert file is missing", func(t *testing.T) {
+		dir := t.TempDir()
+		assert.Nil(t, buildCollectorTLSConfig(filepath.Join(dir, "missing.crt"), filepath.Join(dir, "missing.key")))
+	})
+
+	t.Run("does not hardcode a min version when no profile env is set", func(t *testing.T) {
+		dir := t.TempDir()
+		certPath, keyPath := writeSelfSignedCert(t, dir)
+		cfg := buildCollectorTLSConfig(certPath, keyPath)
+		if cfg == nil {
+			t.Fatal("expected a non-nil TLS config")
+		}
+		// No TLS_* env: nothing applied, so MinVersion stays 0 (Go decides), never a hardcoded 1.3.
+		assert.Equal(t, uint16(0), cfg.MinVersion)
+		assert.Len(t, cfg.Certificates, 1)
+	})
+
+	t.Run("applies min version and cipher suites from the profile env (TLS 1.2)", func(t *testing.T) {
+		dir := t.TempDir()
+		certPath, keyPath := writeSelfSignedCert(t, dir)
+		t.Setenv("TLS_MIN_VERSION", "771")           // TLS 1.2
+		t.Setenv("TLS_CIPHER_SUITES", "49199,49195") // ECDHE-RSA/ECDSA AES128-GCM
+		cfg := buildCollectorTLSConfig(certPath, keyPath)
+		if cfg == nil {
+			t.Fatal("expected a non-nil TLS config")
+		}
+		assert.Equal(t, uint16(tls.VersionTLS12), cfg.MinVersion)
+		assert.Equal(t, []uint16{49199, 49195}, cfg.CipherSuites)
+	})
+
+	t.Run("ignores cipher suites when the profile pins TLS 1.3", func(t *testing.T) {
+		dir := t.TempDir()
+		certPath, keyPath := writeSelfSignedCert(t, dir)
+		t.Setenv("TLS_MIN_VERSION", "772") // TLS 1.3
+		t.Setenv("TLS_CIPHER_SUITES", "49199,49195")
+		cfg := buildCollectorTLSConfig(certPath, keyPath)
+		if cfg == nil {
+			t.Fatal("expected a non-nil TLS config")
+		}
+		assert.Equal(t, uint16(tls.VersionTLS13), cfg.MinVersion)
+		assert.Empty(t, cfg.CipherSuites)
+	})
+}
+
 func TestBuildMockClientTLSConfig(t *testing.T) {
 	t.Run("returns nil when the cert file is missing", func(t *testing.T) {
 		dir := t.TempDir()

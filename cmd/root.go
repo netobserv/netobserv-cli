@@ -93,6 +93,9 @@ func init() {
 
 	// metrics
 	rootCmd.AddCommand(metricCmd)
+
+	// resolve-tls (collector initContainer helper)
+	rootCmd.AddCommand(resolveTLSCmd)
 }
 
 func onInit() {

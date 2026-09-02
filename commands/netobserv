@@ -205,7 +205,10 @@ if [[ "$command" == "flows" || "$command" == "packets" || "$command" == "metrics
   
   # override extra configs
   if [[ "$tlsEnabled" == "true" ]]; then
-    overrides="'{\"spec\":{\"serviceAccount\":\"netobserv-cli\",\"volumes\":[{\"name\":\"collector-tls\",\"secret\":{\"secretName\":\"collector-tls\"}}],\"containers\":[{\"name\":\"collector\",\"image\":\"$img\",\"volumeMounts\":[{\"name\":\"collector-tls\",\"mountPath\":\"/etc/collector-tls\",\"readOnly\":true}]}]}}'"
+    # resolve-tls initContainer writes the collector-tls-config ConfigMap (resolved from the cluster
+    # tlsSecurityProfile) before the collector starts; the collector container consumes it via envFrom
+    # so its gRPC server honors the cluster profile instead of hardcoding a TLS version.
+    overrides="'{\"spec\":{\"serviceAccount\":\"netobserv-cli\",\"volumes\":[{\"name\":\"collector-tls\",\"secret\":{\"secretName\":\"collector-tls\"}}],\"initContainers\":[{\"name\":\"resolve-tls\",\"image\":\"$img\",\"imagePullPolicy\":\"Always\",\"command\":[\"/network-observability-cli\",\"resolve-tls\",\"--namespace\",\"$namespace\"]}],\"containers\":[{\"name\":\"collector\",\"image\":\"$img\",\"envFrom\":[{\"configMapRef\":{\"name\":\"collector-tls-config\",\"optional\":false}}],\"volumeMounts\":[{\"name\":\"collector-tls\",\"mountPath\":\"/etc/collector-tls\",\"readOnly\":true}]}]}}'"
   else
     overrides="'{\"spec\":{\"serviceAccount\": \"netobserv-cli\"}}'"
   fi
@@ -249,11 +252,20 @@ if [[ "$command" == "flows" || "$command" == "packets" || "$command" == "metrics
   eval "$cmd"
 
   ${K8S_CLI_BIN} wait \
-    --timeout 60s \
+    --timeout 120s \
     -n "$namespace" \
     --for=condition=Ready pod/collector || exit 1
 
   captureStarted=true
+
+  # On the TLS path, agent deployment was deferred by setup() until the collector's resolve-tls
+  # initContainer wrote the collector-tls-config ConfigMap. Now that the collector is ready, the
+  # ConfigMap exists, so it's safe to create the agents that reference it via envFrom.
+  if [[ "$tlsEnabled" == "true" ]]; then
+    echo "creating capture agents"
+    applyYAML "$agentManifest"
+    waitDaemonset
+  fi
 
   if [[ "$runBackground" != "true" && "$outputYAML" != "true" ]]; then
     echo "Executing collector command... "
