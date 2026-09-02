@@ -453,6 +453,7 @@ function setup() {
   # ConfigMap (envFrom, optional:false), which only exists after the collector's resolve-tls
   # initContainer runs. commands/netobserv applies "$agentManifest" once the collector is ready.
   if [[ "$tlsEnabled" == "true" ]]; then
+    # shellcheck disable=SC2034 # consumed by commands/netobserv after the collector is ready
     agentManifest="$yaml"
     return
   fi
