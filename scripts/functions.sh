@@ -19,6 +19,9 @@ if [ -z "${dateName+x}" ]; then dateName="$(date +"%Y_%m_%d_%I_%M")"; fi
 # force skipping cleanup
 skipCleanup=false
 
+# TLS enabled on OpenShift
+tlsEnabled=false
+
 # get either oc (favorite) or kubectl paths
 # this is used only when calling commands directly
 # else it will be overridden by inject.sh
@@ -49,6 +52,10 @@ command=""
 options=""
 manifest=""
 nodeSelector=""
+
+# finalized agent manifest, captured by setup() and applied later (after the collector is ready)
+# when TLS is enabled, so the resolve-tls initContainer can write the TLS ConfigMap first
+agentManifest=""
 
 OUTPUT_PATH="./output"
 YAML_OUTPUT_FILE="capture.yml"
@@ -152,6 +159,37 @@ function setMetricsPipelineConfig() {
   "$YQ_BIN" e --inplace " .spec.template.spec.containers[0].env[] |= select(.name == \"FLP_CONFIG\").value |= ($metricsPipelineConfigJSON | tojson)" "$1"
 }
 
+function enableCollectorTLS() {
+  # Add CA volume and mount to DaemonSet for FLP client TLS
+  "$YQ_BIN" e --inplace '.spec.template.spec.containers[0].volumeMounts += [{"name":"collector-ca","mountPath":"/etc/collector-ca","readOnly":true}]' "$manifest"
+  "$YQ_BIN" e --inplace '.spec.template.spec.volumes += [{"name":"collector-ca","configMap":{"name":"collector-ca"}}]' "$manifest"
+
+  # Honor the cluster TLS security profile: the FLP client reads TLS_MIN_VERSION/TLS_CIPHER_SUITES/
+  # TLS_CURVE_PREFERENCES from the collector-tls-config ConfigMap (written by the resolve-tls
+  # initContainer on the collector). optional:false so a missing ConfigMap fails loudly instead of
+  # silently downgrading TLS.
+  "$YQ_BIN" e --inplace '.spec.template.spec.containers[0].envFrom += [{"configMapRef":{"name":"collector-tls-config","optional":false}}]' "$manifest"
+
+  # Add TLS config to FLP pipeline grpc write
+  copyFLPConfig "$manifest"
+  sendIndex=$("$YQ_BIN" e -oj ".parameters[] | select(.name==\"send\") | path | .[-1]" "$json")
+  "$YQ_BIN" e -oj --inplace ".parameters[$sendIndex].write.grpc.tls = {\"caCertPath\":\"/etc/collector-ca/service-ca.crt\"}" "$json"
+  updateFLPConfig "$json" "$manifest"
+
+  # Annotate collector service for cert generation
+  collectorServiceYAML=$(echo "$collectorServiceYAML" | "$YQ_BIN" e '.metadata.annotations."service.beta.openshift.io/serving-cert-secret-name" = "collector-tls"' -)
+}
+
+function createCAConfigMap() {
+  applyYAML "apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: collector-ca
+  namespace: $namespace
+  annotations:
+    service.beta.openshift.io/inject-cabundle: \"true\""
+}
+
 function clusterIsReady() {
   ready=$(${K8S_CLI_BIN} get all 2>&1 | grep -c "Unable to connect")
   if [[ "${ready}" -gt 0 ]]; then
@@ -162,10 +200,14 @@ function clusterIsReady() {
 }
 
 function checkClusterVersion() {
+  # isOCP is a global consumed later (e.g. to enable collector TLS): default to false and flip it to
+  # true once we confirm we're talking to an OpenShift cluster.
+  isOCP=false
   states=$(${K8S_CLI_BIN} get clusterversion version -o jsonpath='{.status.history[*].state}')
   if [[ -z "${states}" ]]; then
     echo "Can't check version since cluster is not OpenShift"
-  else 
+  else
+    isOCP=true
     versions=$(${K8S_CLI_BIN} get clusterversion version -o jsonpath='{.status.history[*].version}')
     version=""
 
@@ -367,6 +409,13 @@ function setup() {
     YAML_OUTPUT_FILE="${command}_capture_${dateName}.yml"
   fi
 
+  # Enable TLS on OpenShift for collector-based captures
+  if [[ "$outputYAML" == "false" && "$isOCP" == "true" ]] && [[ "$command" = "flows" || "$command" = "packets" ]]; then
+    tlsEnabled=true
+    echo "OpenShift detected, enabling TLS for collector"
+    enableCollectorTLS
+  fi
+
   if [[ "$outputYAML" == "false" && -n "$nodeSelector" ]]; then
     getNodesByLabel "$nodeSelector"
   fi
@@ -378,13 +427,18 @@ function setup() {
   echo "creating service account"
   applyYAML "$saYAML"
 
-  if [ "$command" = "flows" ]; then
+  # Flows and packets captures both rely on the collector service (and its CA configmap when TLS is on)
+  if [[ "$command" = "flows" || "$command" = "packets" ]]; then
     echo "creating collector service"
     applyYAML "$collectorServiceYAML"
+    if [[ "$tlsEnabled" == "true" ]]; then
+      echo "creating CA configmap for TLS"
+      createCAConfigMap
+    fi
+  fi
+  if [ "$command" = "flows" ]; then
     echo "creating flow-capture agents"
   elif [ "$command" = "packets" ]; then
-    echo "creating collector service"
-    applyYAML "$collectorServiceYAML"
     echo "creating packet-capture agents"
   elif [ "$command" = "metrics" ]; then
     echo "creating service monitor"
@@ -393,11 +447,21 @@ function setup() {
   fi
 
   yaml="$(cat "$manifest")"
+  rm -rf "${MANIFEST_OUTPUT_PATH}"
+
+  # When TLS is enabled, defer agent deployment: the agents consume the collector-tls-config
+  # ConfigMap (envFrom, optional:false), which only exists after the collector's resolve-tls
+  # initContainer runs. commands/netobserv applies "$agentManifest" once the collector is ready.
+  if [[ "$tlsEnabled" == "true" ]]; then
+    # shellcheck disable=SC2034 # consumed by commands/netobserv after the collector is ready
+    agentManifest="$yaml"
+    return
+  fi
+
   applyYAML "$yaml"
   if [[ "$outputYAML" == "false" ]]; then
     waitDaemonset
   fi
-  rm -rf "${MANIFEST_OUTPUT_PATH}"
 }
 
 function follow() {

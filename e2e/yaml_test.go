@@ -75,7 +75,7 @@ func TestFlowFiltersYAML(t *testing.T) {
 			// check yamls parts
 			yamlStr := string(yamlBytes[:])
 			yamls = strings.Split(yamlStr, "---")
-			assert.Equal(t, 8, len(yamls))
+			assert.Equal(t, 10, len(yamls))
 
 			// check yaml contents
 			assert.Contains(t, yamls[0], "kind: Namespace")
@@ -93,6 +93,7 @@ func TestFlowFiltersYAML(t *testing.T) {
 			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - apps resources: - daemonsets verbs: - list - get - watch - delete"))
 			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - resources: - pods - services - nodes verbs: - list - get - watch"))
 			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - apps resources: - replicasets verbs: - list - get - watch"))
+			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - config.openshift.io resources: - apiservers resourceNames: - cluster verbs: - get"))
 
 			assert.Contains(t, yamls[3], "kind: ClusterRoleBinding")
 			assert.Contains(t, yamls[3], "name: netobserv-cli")
@@ -110,16 +111,27 @@ func TestFlowFiltersYAML(t *testing.T) {
 			assert.Contains(t, yamls[5], "name: netobserv-cli")
 			assert.Contains(t, yamls[5], "namespace: \"netobserv-cli\"")
 
-			assert.Contains(t, yamls[6], "kind: Service")
-			assert.Contains(t, yamls[6], "name: collector")
+			assert.Contains(t, yamls[6], "kind: Role")
+			assert.Contains(t, yamls[6], "name: netobserv-cli")
 			assert.Contains(t, yamls[6], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[6]), Normalize("ports: - name: collector protocol: TCP port: 9999 targetPort: 9999"))
+			assert.Contains(t, Normalize(yamls[6]), Normalize("- apiGroups: - resources: - configmaps verbs: - get - create - update"))
 
-			assert.Contains(t, yamls[7], "kind: DaemonSet")
+			assert.Contains(t, yamls[7], "kind: RoleBinding")
 			assert.Contains(t, yamls[7], "name: netobserv-cli")
 			assert.Contains(t, yamls[7], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[7]), Normalize("[{\"direction\": \"\", \"ip_cidr\": \"0.0.0.0/0\", \"protocol\": \"TCP\", \"source_port\": 0, \"destination_port\": 0, \"port\": 8080, \"source_port_range\": \"\", \"source_ports\": \"\", \"destination_port_range\": \"\", \"destination_ports\": \"\", \"port_range\": \"\", \"ports\": \"\", \"icmp_type\": 0, \"icmp_code\": 0, \"peer_ip\": \"\", \"peer_cidr\": \"\", \"action\": \"Accept\", \"tcp_flags\": \"\", \"drops\": false}, {\"direction\": \"\", \"ip_cidr\": \"0.0.0.0/0\", \"protocol\": \"UDP\", \"source_port\": 0, \"destination_port\": 0, \"port\": 0, \"source_port_range\": \"\", \"source_ports\": \"\", \"destination_port_range\": \"\", \"destination_ports\": \"\", \"port_range\": \"\", \"ports\": \"\", \"icmp_type\": 0, \"icmp_code\": 0, \"peer_ip\": \"\", \"peer_cidr\": \"\", \"action\": \"Accept\", \"tcp_flags\": \"\", \"drops\": false}]"))
-			assert.Contains(t, Normalize(yamls[7]), Normalize("\"grpc\": { \"targetHost\": \"collector.netobserv-cli.svc.cluster.local\", \"targetPort\": 9999 }"))
+			assert.Contains(t, Normalize(yamls[7]), Normalize("subjects: - kind: ServiceAccount name: netobserv-cli namespace: \"netobserv-cli\""))
+			assert.Contains(t, Normalize(yamls[7]), Normalize("roleRef: apiGroup: rbac.authorization.k8s.io kind: Role name: netobserv-cli"))
+
+			assert.Contains(t, yamls[8], "kind: Service")
+			assert.Contains(t, yamls[8], "name: collector")
+			assert.Contains(t, yamls[8], "namespace: \"netobserv-cli\"")
+			assert.Contains(t, Normalize(yamls[8]), Normalize("ports: - name: collector protocol: TCP port: 9999 targetPort: 9999"))
+
+			assert.Contains(t, yamls[9], "kind: DaemonSet")
+			assert.Contains(t, yamls[9], "name: netobserv-cli")
+			assert.Contains(t, yamls[9], "namespace: \"netobserv-cli\"")
+			assert.Contains(t, Normalize(yamls[9]), Normalize("[{\"direction\": \"\", \"ip_cidr\": \"0.0.0.0/0\", \"protocol\": \"TCP\", \"source_port\": 0, \"destination_port\": 0, \"port\": 8080, \"source_port_range\": \"\", \"source_ports\": \"\", \"destination_port_range\": \"\", \"destination_ports\": \"\", \"port_range\": \"\", \"ports\": \"\", \"icmp_type\": 0, \"icmp_code\": 0, \"peer_ip\": \"\", \"peer_cidr\": \"\", \"action\": \"Accept\", \"tcp_flags\": \"\", \"drops\": false}, {\"direction\": \"\", \"ip_cidr\": \"0.0.0.0/0\", \"protocol\": \"UDP\", \"source_port\": 0, \"destination_port\": 0, \"port\": 0, \"source_port_range\": \"\", \"source_ports\": \"\", \"destination_port_range\": \"\", \"destination_ports\": \"\", \"port_range\": \"\", \"ports\": \"\", \"icmp_type\": 0, \"icmp_code\": 0, \"peer_ip\": \"\", \"peer_cidr\": \"\", \"action\": \"Accept\", \"tcp_flags\": \"\", \"drops\": false}]"))
+			assert.Contains(t, Normalize(yamls[9]), Normalize("\"grpc\": { \"targetHost\": \"collector.netobserv-cli.svc.cluster.local\", \"targetPort\": 9999 }"))
 
 			return ctx
 		},
@@ -179,7 +191,7 @@ func TestPacketFiltersYAML(t *testing.T) {
 			// check yamls parts
 			yamlStr := string(yamlBytes[:])
 			yamls = strings.Split(yamlStr, "---")
-			assert.Equal(t, 8, len(yamls))
+			assert.Equal(t, 10, len(yamls))
 
 			// check yaml contents
 			assert.Contains(t, yamls[0], "kind: Namespace")
@@ -197,6 +209,7 @@ func TestPacketFiltersYAML(t *testing.T) {
 			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - apps resources: - daemonsets verbs: - list - get - watch - delete"))
 			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - resources: - pods - services - nodes verbs: - list - get - watch"))
 			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - apps resources: - replicasets verbs: - list - get - watch"))
+			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - config.openshift.io resources: - apiservers resourceNames: - cluster verbs: - get"))
 
 			assert.Contains(t, yamls[3], "kind: ClusterRoleBinding")
 			assert.Contains(t, yamls[3], "name: netobserv-cli")
@@ -214,16 +227,27 @@ func TestPacketFiltersYAML(t *testing.T) {
 			assert.Contains(t, yamls[5], "name: netobserv-cli")
 			assert.Contains(t, yamls[5], "namespace: \"netobserv-cli\"")
 
-			assert.Contains(t, yamls[6], "kind: Service")
-			assert.Contains(t, yamls[6], "name: collector")
+			assert.Contains(t, yamls[6], "kind: Role")
+			assert.Contains(t, yamls[6], "name: netobserv-cli")
 			assert.Contains(t, yamls[6], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[6]), Normalize("ports: - name: collector protocol: TCP port: 9999 targetPort: 9999"))
+			assert.Contains(t, Normalize(yamls[6]), Normalize("- apiGroups: - resources: - configmaps verbs: - get - create - update"))
 
-			assert.Contains(t, yamls[7], "kind: DaemonSet")
+			assert.Contains(t, yamls[7], "kind: RoleBinding")
 			assert.Contains(t, yamls[7], "name: netobserv-cli")
 			assert.Contains(t, yamls[7], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[7]), Normalize("[{\"direction\": \"\", \"ip_cidr\": \"0.0.0.0/0\", \"protocol\": \"\", \"source_port\": 0, \"destination_port\": 0, \"port\": 80, \"source_port_range\": \"\", \"source_ports\": \"\", \"destination_port_range\": \"\", \"destination_ports\": \"\", \"port_range\": \"\", \"ports\": \"\", \"icmp_type\": 0, \"icmp_code\": 0, \"peer_ip\": \"\", \"peer_cidr\": \"\", \"action\": \"Accept\", \"tcp_flags\": \"\", \"drops\": false}]"))
-			assert.Contains(t, Normalize(yamls[7]), Normalize("nodeSelector: netobserv: \"true\""))
+			assert.Contains(t, Normalize(yamls[7]), Normalize("subjects: - kind: ServiceAccount name: netobserv-cli namespace: \"netobserv-cli\""))
+			assert.Contains(t, Normalize(yamls[7]), Normalize("roleRef: apiGroup: rbac.authorization.k8s.io kind: Role name: netobserv-cli"))
+
+			assert.Contains(t, yamls[8], "kind: Service")
+			assert.Contains(t, yamls[8], "name: collector")
+			assert.Contains(t, yamls[8], "namespace: \"netobserv-cli\"")
+			assert.Contains(t, Normalize(yamls[8]), Normalize("ports: - name: collector protocol: TCP port: 9999 targetPort: 9999"))
+
+			assert.Contains(t, yamls[9], "kind: DaemonSet")
+			assert.Contains(t, yamls[9], "name: netobserv-cli")
+			assert.Contains(t, yamls[9], "namespace: \"netobserv-cli\"")
+			assert.Contains(t, Normalize(yamls[9]), Normalize("[{\"direction\": \"\", \"ip_cidr\": \"0.0.0.0/0\", \"protocol\": \"\", \"source_port\": 0, \"destination_port\": 0, \"port\": 80, \"source_port_range\": \"\", \"source_ports\": \"\", \"destination_port_range\": \"\", \"destination_ports\": \"\", \"port_range\": \"\", \"ports\": \"\", \"icmp_type\": 0, \"icmp_code\": 0, \"peer_ip\": \"\", \"peer_cidr\": \"\", \"action\": \"Accept\", \"tcp_flags\": \"\", \"drops\": false}]"))
+			assert.Contains(t, Normalize(yamls[9]), Normalize("nodeSelector: netobserv: \"true\""))
 
 			return ctx
 		},
@@ -281,7 +305,7 @@ func TestMetricYAML(t *testing.T) {
 			// check yamls parts
 			yamlStr := string(yamlBytes[:])
 			yamls = strings.Split(yamlStr, "---")
-			assert.Equal(t, 12, len(yamls))
+			assert.Equal(t, 14, len(yamls))
 
 			// check yaml contents
 			assert.Contains(t, yamls[0], "kind: Namespace")
@@ -299,6 +323,7 @@ func TestMetricYAML(t *testing.T) {
 			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - apps resources: - daemonsets verbs: - list - get - watch - delete"))
 			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - resources: - pods - services - nodes verbs: - list - get - watch"))
 			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - apps resources: - replicasets verbs: - list - get - watch"))
+			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - config.openshift.io resources: - apiservers resourceNames: - cluster verbs: - get"))
 
 			assert.Contains(t, yamls[3], "kind: ClusterRoleBinding")
 			assert.Contains(t, yamls[3], "name: netobserv-cli")
@@ -316,37 +341,48 @@ func TestMetricYAML(t *testing.T) {
 			assert.Contains(t, yamls[5], "name: netobserv-cli")
 			assert.Contains(t, yamls[5], "namespace: \"netobserv-cli\"")
 
-			assert.Contains(t, yamls[6], "kind: ClusterRole")
-			assert.Contains(t, yamls[6], "name: netobserv-cli-metrics")
+			assert.Contains(t, yamls[6], "kind: Role")
+			assert.Contains(t, yamls[6], "name: netobserv-cli")
 			assert.Contains(t, yamls[6], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[6]), Normalize("- apiGroups: - resources: - pods - services - endpoints verbs: - list - get - watch - nonResourceURLs: - /metrics verbs: - get"))
+			assert.Contains(t, Normalize(yamls[6]), Normalize("- apiGroups: - resources: - configmaps verbs: - get - create - update"))
 
-			assert.Contains(t, yamls[7], "kind: ClusterRoleBinding")
+			assert.Contains(t, yamls[7], "kind: RoleBinding")
 			assert.Contains(t, yamls[7], "name: netobserv-cli")
 			assert.Contains(t, yamls[7], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[7]), Normalize("subjects: - kind: ServiceAccount name: prometheus-k8s namespace: openshift-monitoring"))
-			assert.Contains(t, Normalize(yamls[7]), Normalize("roleRef: apiGroup: rbac.authorization.k8s.io kind: ClusterRole name: netobserv-cli-metrics"))
+			assert.Contains(t, Normalize(yamls[7]), Normalize("subjects: - kind: ServiceAccount name: netobserv-cli namespace: \"netobserv-cli\""))
+			assert.Contains(t, Normalize(yamls[7]), Normalize("roleRef: apiGroup: rbac.authorization.k8s.io kind: Role name: netobserv-cli"))
 
-			assert.Contains(t, yamls[8], "kind: ServiceMonitor")
-			assert.Contains(t, yamls[8], "name: netobserv-cli")
+			assert.Contains(t, yamls[8], "kind: ClusterRole")
+			assert.Contains(t, yamls[8], "name: netobserv-cli-metrics")
 			assert.Contains(t, yamls[8], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[8]), Normalize("namespaceSelector: matchNames: - \"netobserv-cli\""))
-			assert.Contains(t, Normalize(yamls[8]), Normalize("selector: matchLabels: app: netobserv-cli"))
+			assert.Contains(t, Normalize(yamls[8]), Normalize("- apiGroups: - resources: - pods - services - endpoints verbs: - list - get - watch - nonResourceURLs: - /metrics verbs: - get"))
 
-			assert.Contains(t, yamls[9], "kind: Service")
+			assert.Contains(t, yamls[9], "kind: ClusterRoleBinding")
 			assert.Contains(t, yamls[9], "name: netobserv-cli")
 			assert.Contains(t, yamls[9], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[9]), Normalize("ports: - name: prometheus protocol: TCP port: 9401 targetPort: 9401"))
+			assert.Contains(t, Normalize(yamls[9]), Normalize("subjects: - kind: ServiceAccount name: prometheus-k8s namespace: openshift-monitoring"))
+			assert.Contains(t, Normalize(yamls[9]), Normalize("roleRef: apiGroup: rbac.authorization.k8s.io kind: ClusterRole name: netobserv-cli-metrics"))
 
-			assert.Contains(t, yamls[10], "kind: ConfigMap")
+			assert.Contains(t, yamls[10], "kind: ServiceMonitor")
 			assert.Contains(t, yamls[10], "name: netobserv-cli")
-			assert.Contains(t, yamls[10], "namespace: openshift-config-managed")
-			assert.Contains(t, yamls[10], "console.openshift.io/dashboard: \"true\"")
+			assert.Contains(t, yamls[10], "namespace: \"netobserv-cli\"")
+			assert.Contains(t, Normalize(yamls[10]), Normalize("namespaceSelector: matchNames: - \"netobserv-cli\""))
+			assert.Contains(t, Normalize(yamls[10]), Normalize("selector: matchLabels: app: netobserv-cli"))
 
-			assert.Contains(t, yamls[11], "kind: DaemonSet")
+			assert.Contains(t, yamls[11], "kind: Service")
 			assert.Contains(t, yamls[11], "name: netobserv-cli")
 			assert.Contains(t, yamls[11], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[11]), Normalize("ports: - name: prometheus containerPort: 9401 protocol: TCP"))
+			assert.Contains(t, Normalize(yamls[11]), Normalize("ports: - name: prometheus protocol: TCP port: 9401 targetPort: 9401"))
+
+			assert.Contains(t, yamls[12], "kind: ConfigMap")
+			assert.Contains(t, yamls[12], "name: netobserv-cli")
+			assert.Contains(t, yamls[12], "namespace: openshift-config-managed")
+			assert.Contains(t, yamls[12], "console.openshift.io/dashboard: \"true\"")
+
+			assert.Contains(t, yamls[13], "kind: DaemonSet")
+			assert.Contains(t, yamls[13], "name: netobserv-cli")
+			assert.Contains(t, yamls[13], "namespace: \"netobserv-cli\"")
+			assert.Contains(t, Normalize(yamls[13]), Normalize("ports: - name: prometheus containerPort: 9401 protocol: TCP"))
 
 			return ctx
 		},

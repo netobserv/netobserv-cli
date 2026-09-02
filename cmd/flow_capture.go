@@ -56,7 +56,7 @@ func startFlowCollector() {
 	log.Debug("Initialized database")
 
 	flowPackets := make(chan *genericmap.Flow, 100)
-	collector, err := grpc.StartCollector(port, flowPackets)
+	collector, err := grpc.StartCollector(port, flowPackets, collectorTLSOptions()...)
 	if err != nil {
 		log.Errorf("StartCollector failed: %v", err.Error())
 		return
