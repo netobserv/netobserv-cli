@@ -16,6 +16,7 @@ spec:
     spec:
       serviceAccountName: netobserv-cli
       hostNetwork: true
+      hostPID: false
       dnsPolicy: ClusterFirstWithHostNet
       tolerations:
       - operator: Exists
@@ -40,6 +41,12 @@ spec:
             value: "1s"
           - name: ENABLE_PCA
             value: "true"
+          - name: ENABLE_OPENSSL_TRACKING
+            value: "false"
+          - name: TLS_PLAINTEXT_MIN_BYTES
+            value: "0"
+          - name: TLS_PLAINTEXT_PREVIEW_BYTES
+            value: "256"
           - name: METRICS_ENABLE
             value: "false"
           - name: LOG_LEVEL

@@ -1,0 +1,1 @@
+{"source":"http","message":"NETOBSERV-HTTP api/items","items":[{"id":1,"sku":"http-alpha"},{"id":2,"sku":"http-beta"}],"stack":"nginx cleartext"}

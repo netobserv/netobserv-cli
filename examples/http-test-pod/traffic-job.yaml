@@ -1,0 +1,52 @@
+# Generates steady cleartext HTTP traffic to the http-test server (nginx, no TLS).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: http-test-traffic
+  namespace: http-test
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: curl
+          image: docker.io/curlimages/curl:8.11.1
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              TARGET="${TARGET_URL:-http://http-test.http-test.svc.cluster.local:8080/}"
+              echo "Traffic to ${TARGET}"
+              i=0
+              while [ "$i" -lt 120 ]; do
+                curl --http1.1 --no-keepalive -s \
+                  -H 'Authorization: Bearer fake-http-client-token' \
+                  -H "X-Fake-Trace-Id: http-req-message-${i}" \
+                  -H 'X-Fake-Tenant: demo-http' \
+                  -H 'X-NetObserv-Client: http-traffic-pod' \
+                  "${TARGET}message?seq=${i}" || true
+                curl --http1.1 --no-keepalive -s \
+                  -H 'Authorization: Bearer fake-http-client-token' \
+                  -H "X-Fake-Trace-Id: http-req-items-${i}" \
+                  -H 'X-NetObserv-Client: http-traffic-pod' \
+                  "${TARGET}api/items?seq=${i}" || true
+                curl --http1.1 --no-keepalive -s -X POST \
+                  -H 'Authorization: Bearer fake-http-client-token' \
+                  -H "X-Fake-Trace-Id: http-req-echo-${i}" \
+                  -H 'X-NetObserv-Client: http-traffic-pod' \
+                  -H 'Content-Type: text/plain' \
+                  -d "NETOBSERV-HTTP client request seq=${i}" \
+                  "${TARGET}api/echo?seq=${i}" || true
+                i=$((i + 1))
+                sleep 1
+              done
+              echo "done"

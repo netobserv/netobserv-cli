@@ -1,0 +1,5 @@
+NETOBSERV-OPENSSL POST echo response
+TLS stack: nginx + OpenSSL 3 (userspace libssl.so)
+Workload: openssl-test-pod
+Endpoint: POST /api/echo
+Note: static response body (OpenSSL SSL_write on nginx reply)

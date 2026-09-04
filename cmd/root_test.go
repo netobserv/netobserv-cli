@@ -75,14 +75,48 @@ func TestDefaultArguments(t *testing.T) {
 	assert.Empty(t, options)
 }
 
+func TestOptionEnabled(t *testing.T) {
+	options = "port=443|--enable_openssl"
+	assert.True(t, optionEnabled("enable_openssl"))
+	assert.False(t, optionEnabled("enable_gotls"))
+
+	options = "enable_openssl=true|port=443"
+	assert.True(t, optionEnabled("enable_openssl"))
+
+	options = "enable_openssl=false"
+	assert.False(t, optionEnabled("enable_openssl"))
+
+	// Exact key match: a longer option name must not satisfy a shorter query.
+	options = "enable_openssl_debug=true"
+	assert.False(t, optionEnabled("enable_openssl"))
+	assert.True(t, optionEnabled("enable_openssl_debug"))
+}
+
+func TestPlaintextCaptureEnabled(t *testing.T) {
+	options = "--enable_openssl"
+	assert.True(t, plaintextCaptureEnabled())
+
+	options = "enable_gotls=true"
+	assert.False(t, plaintextCaptureEnabled())
+
+	options = "port=443"
+	assert.False(t, plaintextCaptureEnabled())
+}
+
 func setup(t *testing.T) {
 	// reset time to startup time
 	resetTime()
 
+	capture = Flow
+	options = ""
+
 	// clear filters and previous flows
 	regexes = []string{}
 	lastFlows = []config.GenericMap{}
+	clearPacketCaptureBuffers()
 	showCount = defaultFlowShowCount
+	selectedData = []byte{}
+	paused = false
 
 	// clear previous table content
 	tableData = &TableData{

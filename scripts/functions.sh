@@ -621,6 +621,28 @@ function edit_manifest() {
   "ipsec_enable")
     "$YQ_BIN" e --inplace ".spec.template.spec.containers[0].env[] |= select(.name==\"ENABLE_IPSEC_TRACKING\").value|=\"$2\"" "$manifest"
     ;;
+  "openssl_enable")
+    "$YQ_BIN" e --inplace ".spec.template.spec.containers[0].env[] |= select(.name==\"ENABLE_OPENSSL_TRACKING\").value|=\"$2\"" "$manifest"
+    ;;
+  "tls_plaintext_min_bytes")
+    "$YQ_BIN" e --inplace ".spec.template.spec.containers[0].env[] |= select(.name==\"TLS_PLAINTEXT_MIN_BYTES\").value|=\"$2\"" "$manifest"
+    ;;
+  "tls_plaintext_preview_bytes")
+    "$YQ_BIN" e --inplace ".spec.template.spec.containers[0].env[] |= select(.name==\"TLS_PLAINTEXT_PREVIEW_BYTES\").value|=\"$2\"" "$manifest"
+    ;;
+  "tls_host_mounts")
+    if [[ "$("$YQ_BIN" e '[.spec.template.spec.volumes[] | select(.name == "host-usr")] | length' "$manifest")" == "0" ]]; then
+      "$YQ_BIN" e --inplace '.spec.template.spec.volumes += [{"name":"host-usr","hostPath":{"path":"/usr","type":"Directory"}},{"name":"host-lib","hostPath":{"path":"/lib","type":"Directory"}},{"name":"host-lib64","hostPath":{"path":"/lib64","type":"Directory"}}]' "$manifest"
+      "$YQ_BIN" e --inplace '.spec.template.spec.containers[0].volumeMounts += [{"name":"host-usr","mountPath":"/host/usr","readOnly":true},{"name":"host-lib","mountPath":"/host/lib","readOnly":true},{"name":"host-lib64","mountPath":"/host/lib64","readOnly":true}]' "$manifest"
+    fi
+    "$YQ_BIN" e --inplace '.spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem = false' "$manifest"
+    if [[ "$("$YQ_BIN" e '(.spec.template.spec.containers[0].securityContext.capabilities.add // []) | any(. == "SYS_PTRACE")' "$manifest")" != "true" ]]; then
+      "$YQ_BIN" e --inplace '.spec.template.spec.containers[0].securityContext.capabilities.add += ["SYS_PTRACE"]' "$manifest"
+    fi
+    ;;
+  "host_pid")
+    "$YQ_BIN" e --inplace ".spec.template.spec.hostPID|=$2" "$manifest"
+    ;;
   "privileged")
     "$YQ_BIN" e --inplace ".spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation|=$2" "$manifest"
     "$YQ_BIN" e --inplace ".spec.template.spec.containers[0].securityContext.privileged|=$2" "$manifest"
@@ -837,6 +859,147 @@ function waitDaemonset(){
 }
 
 # Validate options and edit manifest accordingly
+function option_basename() {
+  local key="${1%%=*}"
+  echo "${key#--}"
+}
+
+function option_enabled_flag() {
+  local option="$1"
+  local key="${option%%=*}"
+  local value="${option#*=}"
+  if [[ "$key" == "$value" ]]; then
+    return 0
+  fi
+  [[ "$value" == "true" ]]
+}
+
+function has_plaintext_pid_scope() {
+  for option in "${options[@]}"; do
+    case "$(option_basename "$option")" in
+    peer_ip|peer_cidr)
+      local value="${option#*=}"
+      if [[ -n "$value" && "${option%%=*}" != "$value" ]]; then
+        return 0
+      fi
+      ;;
+    esac
+  done
+  return 1
+}
+
+function plaintext_capture_flag_enabled() {
+  local flag="$1"
+  for option in "${options[@]}"; do
+    case "$(option_basename "$option")" in
+    "$flag")
+      if option_enabled_flag "$option"; then
+        return 0
+      fi
+      ;;
+    esac
+  done
+  return 1
+}
+
+function openssl_capture_enabled() {
+  plaintext_capture_flag_enabled enable_openssl
+}
+
+function has_port_filter() {
+  for option in "${options[@]}"; do
+    case "$(option_basename "$option")" in
+    port|dport|sport|ports|dports|sports|port_range|dport_range|sport_range)
+      local value="${option#*=}"
+      if [[ -n "$value" && "${option%%=*}" != "$value" ]]; then
+        return 0
+      fi
+      ;;
+    esac
+  done
+  return 1
+}
+
+function plaintext_port_filter_label() {
+  for option in "${options[@]}"; do
+    case "$(option_basename "$option")" in
+    port|dport|sport|ports|dports|sports|port_range|dport_range|sport_range)
+      local key
+      key="$(option_basename "$option")"
+      local value="${option#*=}"
+      if [[ -n "$value" && "${option%%=*}" != "$value" ]]; then
+        echo "${key}=${value}"
+        return
+      fi
+      ;;
+    esac
+  done
+}
+
+function plaintext_peer_scope_label() {
+  for option in "${options[@]}"; do
+    case "$(option_basename "$option")" in
+    peer_ip)
+      local value="${option#*=}"
+      if [[ -n "$value" && "${option%%=*}" != "$value" ]]; then
+        echo "peer_ip=${value}"
+        return
+      fi
+      ;;
+    peer_cidr)
+      local value="${option#*=}"
+      if [[ -n "$value" && "${option%%=*}" != "$value" ]]; then
+        echo "peer_cidr=${value}"
+        return
+      fi
+      ;;
+    esac
+  done
+}
+
+function warn_plaintext_peer_scope() {
+  if [[ "$command" != "packets" ]]; then
+    return
+  fi
+  local openssl=0
+  plaintext_capture_flag_enabled enable_openssl && openssl=1
+  if [[ $openssl -eq 0 ]]; then
+    return
+  fi
+
+  local peer_scope=0 port_filter=0
+  has_plaintext_pid_scope && peer_scope=1
+  has_port_filter && port_filter=1
+
+  if [[ $peer_scope -eq 1 || $port_filter -eq 1 ]]; then
+    local scope_parts=()
+    if [[ $peer_scope -eq 1 ]]; then
+      scope_parts+=("$(plaintext_peer_scope_label)")
+    fi
+    if [[ $port_filter -eq 1 ]]; then
+      scope_parts+=("$(plaintext_port_filter_label)")
+    fi
+    local IFS=', '
+    echo "Plaintext capture scoped to ${scope_parts[*]}."
+  fi
+
+  if [[ $peer_scope -eq 0 ]]; then
+    echo >&2
+    echo "Warning: TLS plaintext capture has no --peer_ip or --peer_cidr scope." >&2
+    if [[ $openssl -eq 1 ]]; then
+      echo "  --enable_openssl: hooks libssl.so in every container on each node (infra binaries excluded)." >&2
+    fi
+    echo "                    Recommended: --peer_ip=<pod-ip> to limit which processes are hooked." >&2
+    echo >&2
+  fi
+
+  if [[ $port_filter -eq 0 ]]; then
+    echo "Warning: TLS plaintext capture has no --port (or --dport) filter." >&2
+    echo "          Recommended: --port=<service-port> to filter exported plaintext and wire capture." >&2
+    echo >&2
+  fi
+}
+
 function parse_args() {
   # Iterate through the command-line arguments
   for option in "${options[@]}"; do
@@ -1022,6 +1185,50 @@ function parse_args() {
         echo "invalid value for --enable_all"
       fi
       ;;
+    *enable_openssl) # OpenSSL plaintext capture via libssl uprobes
+      if [[ "$command" == "packets" ]]; then
+        defaultValue "true"
+        if [[ "$value" == "true" ]]; then
+          edit_manifest "privileged" "$value"
+          edit_manifest "host_pid" "$value"
+          edit_manifest "tls_host_mounts" ""
+          edit_manifest "openssl_enable" "$value"
+        elif [[ "$value" == "false" ]]; then
+          echo
+        else
+          echo "invalid value for --enable_openssl"
+        fi
+      else
+        echo "--enable_openssl is invalid option for $command"
+        exit 1
+      fi
+      ;;
+    *tls_plaintext_min_bytes) # Drop short TLS plaintext events before agent export
+      if [[ "$command" == "packets" ]]; then
+        if [[ "$value" =~ ^[0-9]+$ ]]; then
+          edit_manifest "tls_plaintext_min_bytes" "$value"
+        else
+          echo "invalid value for --tls_plaintext_min_bytes (non-negative integer required)"
+          exit 1
+        fi
+      else
+        echo "--tls_plaintext_min_bytes is invalid option for $command"
+        exit 1
+      fi
+      ;;
+    *tls_plaintext_preview_bytes) # PlaintextPreview length on exported events
+      if [[ "$command" == "packets" ]]; then
+        if [[ "$value" =~ ^[0-9]+$ ]]; then
+          edit_manifest "tls_plaintext_preview_bytes" "$value"
+        else
+          echo "invalid value for --tls_plaintext_preview_bytes (non-negative integer required; 0 = full payload)"
+          exit 1
+        fi
+      else
+        echo "--tls_plaintext_preview_bytes is invalid option for $command"
+        exit 1
+      fi
+      ;;
     *privileged) # Force privileged mode
       defaultValue "true"
       if [[ "$value" == "true" ]]; then
@@ -1176,6 +1383,8 @@ function parse_args() {
       ;;
     esac
   done
+
+  warn_plaintext_peer_scope
 
   # avoid packet capture without filters
   if [[ "$command" = "packets" ]]; then

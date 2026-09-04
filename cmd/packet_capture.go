@@ -1,11 +1,15 @@
 package cmd
 
 import (
+	"bufio"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gopacket/gopacket"
@@ -30,12 +34,19 @@ var (
 	srcComment    strings.Builder
 	dstComment    strings.Builder
 	commonComment strings.Builder
+	tlsKeylogPath string
 )
+
+func init() {
+	pktCmd.Flags().StringVar(&tlsKeylogPath, "tls-keylog", "", "Path to TLS key log file (SSLKEYLOGFILE format) for pcapng DSB")
+}
 
 func runPacketCapture(_ *cobra.Command, _ []string) {
 	capture = Packet
+	showCount = defaultFlowShowCount
+	clearPacketCaptureBuffers()
 	if isBackground {
-		go backgroundHearbeat() // show table periodically in background
+		go backgroundHearbeat()
 		startPacketCollector()
 	} else {
 		go startPacketCollector()
@@ -43,7 +54,6 @@ func runPacketCapture(_ *cobra.Command, _ []string) {
 	}
 }
 
-//nolint:cyclop
 func startPacketCollector() {
 	if len(filename) > 0 {
 		log.Infof("Starting Packet Capture for %s...", filename)
@@ -51,7 +61,7 @@ func startPacketCollector() {
 		log.Infof("Starting Packet Capture...")
 		filename = strings.ReplaceAll(
 			currentTime().UTC().Format(time.RFC3339),
-			":", "") // get rid of offensive colons
+			":", "")
 	}
 
 	f, err := createOutputFile("pcap", filename+".pcapng")
@@ -59,7 +69,17 @@ func startPacketCollector() {
 		log.Fatal(err)
 	}
 	defer f.Close()
-	log.Trace("Created pcapng file")
+
+	var plaintextLog io.WriteCloser
+	if plaintextCaptureEnabled() {
+		plaintextFile, err := createOutputFile("plaintext", filename+".jsonl")
+		if err != nil {
+			log.Error("failed to create plaintext log", err)
+		} else {
+			plaintextLog = plaintextFile
+			defer plaintextLog.Close()
+		}
+	}
 
 	ngw, err := pcapgo.NewNgWriter(f, layers.LinkTypeEthernet)
 	if err != nil {
@@ -67,7 +87,13 @@ func startPacketCollector() {
 		return
 	}
 	defer ngw.Flush()
-	log.Trace("Wrote pcap section header & interface")
+
+	if tlsKeylogPath != "" {
+		if err := embedTLSKeylog(ngw, tlsKeylogPath); err != nil {
+			log.Warnf("TLS keylog embed failed: %v", err)
+		}
+		go watchTLSKeylog(ngw, tlsKeylogPath)
+	}
 
 	flowPackets := make(chan *genericmap.Flow, 100)
 	collector, err := grpc.StartCollector(port, flowPackets)
@@ -80,49 +106,39 @@ func startPacketCollector() {
 
 	go func() {
 		<-utils.ExitChannel()
-		log.Debug("Ending collector")
 		close(flowPackets)
 		collector.Close()
-		log.Debug("Done")
 	}()
 
-	log.Trace("Ready ! Waiting for packets...")
 	for fp := range flowPackets {
-		if !captureStarted {
-			log.Debugf("Received first %d packets", len(flowPackets))
-		}
-
 		if stopReceived {
-			log.Debug("Stop received")
 			return
 		}
 
 		genericMap := config.GenericMap{}
-		err := json.Unmarshal(fp.GenericMap.Value, &genericMap)
-		if err != nil {
+		if err := json.Unmarshal(fp.GenericMap.Value, &genericMap); err != nil {
 			log.Error("Error while parsing json", err)
 			return
 		}
-		if !captureStarted {
-			log.Debugf("Parsed genericMap %v", genericMap)
+
+		if isPlaintextRecord(genericMap) {
+			assignPlaintextPacketID(&genericMap)
+			enrichPlaintextForExport(&genericMap)
+			genericMap["PcapAnnotated"] = false
+			if plaintextLog != nil {
+				writePlaintextJSONL(plaintextLog, &genericMap)
+			}
+			continue
 		}
 
 		data, ok := genericMap["Data"]
 		if ok {
-			// display as flow async
 			go AppendFlow(genericMap.Copy())
-
 			writePacketData(ngw, &genericMap, &data)
 		} else {
-			if !captureStarted {
-				log.Debug("Data is missing")
-			}
-
-			// display as flow async
 			go AppendFlow(genericMap)
 		}
 
-		// terminate capture if max bytes reached
 		totalBytes += int64(len(fp.GenericMap.Value))
 		if totalBytes > maxBytes {
 			if exit := onLimitReached(); exit {
@@ -131,10 +147,8 @@ func startPacketCollector() {
 			}
 		}
 
-		// terminate capture if max time reached
 		now := currentTime()
-		duration := now.Sub(startupTime)
-		if int(duration) > int(maxTime) {
+		if int(now.Sub(startupTime)) > int(maxTime) {
 			if exit := onLimitReached(); exit {
 				log.Infof("Capture reached %s, exiting now...", maxTime)
 				return
@@ -145,35 +159,51 @@ func startPacketCollector() {
 	}
 }
 
+func plaintextCaptureEnabled() bool {
+	return optionEnabled("enable_openssl")
+}
+
+// clearPacketCaptureBuffers is a no-op until wire/TUI correlation lands (NETOBSERV-2859).
+func clearPacketCaptureBuffers() {}
+
+func isPlaintextRecord(m config.GenericMap) bool {
+	rt, ok := m["RecordType"].(string)
+	return ok && rt == "plaintext"
+}
+
+func writePlaintextJSONL(w io.Writer, m *config.GenericMap) {
+	line, err := json.Marshal(m)
+	if err != nil {
+		log.Error("plaintext json marshal", err)
+		return
+	}
+	if _, err := w.Write(append(line, '\n')); err != nil {
+		log.Error("plaintext json write", err)
+	}
+}
+
 func writePacketData(ngw *pcapgo.NgWriter, genericMap *config.GenericMap, data *interface{}) {
-	// Get capture timestamp
 	ts := time.Unix(int64((*genericMap)["Time"].(float64)), 0)
 
-	// Decode b64 encoded data
 	b, err := base64.StdEncoding.DecodeString((*data).(string))
 	if err != nil {
 		log.Error("Error while decoding data", err)
 		return
 	}
-	// sort generic map keys to keep comments ordered
 	keys := make([]string, 0, len((*genericMap)))
 	for k := range *genericMap {
-		// ignore time field
 		if k == "Time" || k == "Data" {
 			continue
 		}
 		keys = append(keys, k)
-
 	}
 	sort.Strings(keys)
 
-	// generate comments per category
 	srcComment.WriteString("Source\n")
 	dstComment.WriteString("Destination\n")
 	commonComment.WriteString("Common\n")
 	for _, k := range keys {
 		id := toColID(k)
-		// add name and value without truncating text
 		str := fmt.Sprintf("%s: %v\n", toColName(id, 0), toColValue((*genericMap), id, 0))
 		if strings.HasPrefix(k, "Src") {
 			srcComment.WriteString(str)
@@ -184,8 +214,8 @@ func writePacketData(ngw *pcapgo.NgWriter, genericMap *config.GenericMap, data *
 		}
 	}
 
-	// write enriched data as interface
-	if err := ngw.WritePacketWithOptions(gopacket.CaptureInfo{
+	ngwMu.Lock()
+	err = ngw.WritePacketWithOptions(gopacket.CaptureInfo{
 		Timestamp:     ts,
 		Length:        len(b),
 		CaptureLength: len(b),
@@ -195,7 +225,9 @@ func writePacketData(ngw *pcapgo.NgWriter, genericMap *config.GenericMap, data *
 			dstComment.String(),
 			commonComment.String(),
 		},
-	}); err != nil {
+	})
+	ngwMu.Unlock()
+	if err != nil {
 		log.Error("Error while writing packet", err)
 		return
 	}
@@ -203,4 +235,73 @@ func writePacketData(ngw *pcapgo.NgWriter, genericMap *config.GenericMap, data *
 	srcComment.Reset()
 	dstComment.Reset()
 	commonComment.Reset()
+}
+
+// ngwMu serializes all NgWriter writes (packets and TLS keylog DSB blocks).
+var ngwMu sync.Mutex
+var keylogOffset int64
+
+func embedTLSKeylog(ngw *pcapgo.NgWriter, path string) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if len(content) == 0 {
+		return nil
+	}
+	ngwMu.Lock()
+	defer ngwMu.Unlock()
+	if err := ngw.WriteDecryptionSecretsBlock(pcapgo.DSB_SECRETS_TYPE_TLS, content); err != nil {
+		return err
+	}
+	keylogOffset = int64(len(content))
+	return nil
+}
+
+func watchTLSKeylog(ngw *pcapgo.NgWriter, path string) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		if stopReceived {
+			return
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		ngwMu.Lock()
+		offset := keylogOffset
+		ngwMu.Unlock()
+		if _, err := f.Seek(offset, io.SeekStart); err != nil {
+			_ = f.Close()
+			continue
+		}
+		data, err := io.ReadAll(f)
+		_ = f.Close()
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		ngwMu.Lock()
+		if err := ngw.WriteDecryptionSecretsBlock(pcapgo.DSB_SECRETS_TYPE_TLS, data); err != nil {
+			log.Warnf("failed to append TLS keylog DSB: %v", err)
+		} else {
+			keylogOffset += int64(len(data))
+		}
+		ngwMu.Unlock()
+	}
+}
+
+// ParseKeylogLines reads NSS key log format lines from a reader.
+func ParseKeylogLines(r io.Reader) ([]byte, error) {
+	var buf strings.Builder
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		buf.WriteString(line)
+		buf.WriteByte('\n')
+	}
+	return []byte(buf.String()), scanner.Err()
 }

@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: http-test
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: http-test
+  namespace: http-test
+  labels:
+    app: http-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: http-test
+  template:
+    metadata:
+      labels:
+        app: http-test
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        hostUsers: false
+        fsGroup: 0
+      containers:
+        - name: server
+          image: __HTTP_TEST_IMAGE__
+          imagePullPolicy: __IMAGE_PULL_POLICY__
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: http-test
+  namespace: http-test
+spec:
+  selector:
+    app: http-test
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

@@ -1,0 +1,64 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openssl-test
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openssl-test
+  namespace: openssl-test
+  labels:
+    app: openssl-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openssl-test
+  template:
+    metadata:
+      labels:
+        app: openssl-test
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        hostUsers: false
+        fsGroup: 0
+      containers:
+        - name: server
+          image: __OPENSSL_TEST_IMAGE__
+          imagePullPolicy: __IMAGE_PULL_POLICY__
+          ports:
+            - name: https
+              containerPort: 8443
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: https
+              scheme: HTTPS
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: https
+              scheme: HTTPS
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openssl-test
+  namespace: openssl-test
+spec:
+  selector:
+    app: openssl-test
+  ports:
+    - name: https
+      port: 8443
+      targetPort: https

@@ -84,6 +84,12 @@ function flows_examples {
 function packets_examples {
   echo "  Capture packets on port 8080:"
   echo "    netobserv packets --port=8080"
+  echo "  Capture HTTPS with OpenSSL plaintext via libssl uprobes:"
+  echo "    netobserv packets --port=8443 --enable_openssl --peer_ip=<pod-ip> --privileged --background"
+  echo "    # test workload: examples/openssl-test-pod/"
+  echo "    # readable output: output/plaintext/<timestamp>.jsonl (PlaintextDisplay field)"
+  echo "  Capture with Wireshark key log embedded in pcapng:"
+  echo "    netobserv packets --port=443 --tls-keylog=/path/to/keylog.txt"
   echo "  Capture packets on specific nodes (labeled with 'netobserv=true') and port, for a maximum of 100MB:"
   echo "    netobserv packets --node-selector=netobserv:true --port=80 --max-bytes=100000000"
 }
@@ -129,6 +135,13 @@ function flowsAndPackets_collector_usage {
   echo "  --max-bytes:                  maximum capture bytes                                 (default: 50000000 = 50MB)"
 }
 
+function packets_tls_usage {
+  echo "  --enable_openssl:             capture TLS plaintext via OpenSSL uprobes             (default: false, requires --privileged; recommended: --peer_ip --port)"
+  echo "  --tls_plaintext_min_bytes:    drop TLS plaintext events shorter than N bytes         (default: 0, agent env TLS_PLAINTEXT_MIN_BYTES)"
+  echo "  --tls_plaintext_preview_bytes: PlaintextPreview length (0 = full captured payload)   (default: 256)"
+  echo "  --tls-keylog:                 path to SSLKEYLOGFILE for pcapng decryption           (collector flag)"
+}
+
 # fmetrics collector options
 function metrics_collector_usage {
   echo "  --background:                 run in background                                     (default: false)"
@@ -153,10 +166,10 @@ function filters_usage {
   echo "  --icmp_code:                  filter ICMP code                                      (default: n/a)"
   echo "  --icmp_type:                  filter ICMP type                                      (default: n/a)"
   echo "  --node-selector:              capture on specific nodes                             (default: n/a)"
-  echo "  --peer_ip:                    filter peer IP                                        (default: n/a)"
+  echo "  --peer_ip:                    scope which processes get TLS hooks; filter peer IP     (default: n/a; recommended with TLS flags)"
   echo "  --peer_cidr:                  filter peer CIDR                                      (default: n/a)"
   echo "  --port_range:                 filter port range                                     (default: n/a)"
-  echo "  --port:                       filter port                                           (default: n/a)"
+  echo "  --port:                       filter exported plaintext and wire capture            (default: n/a; recommended with TLS flags)"
   echo "  --ports:                      filter on either of two ports                         (default: n/a)"
   echo "  --protocol:                   filter protocol                                       (default: n/a)"
   echo "  --query:                      filter flows using a custom query                     (default: n/a)"
@@ -211,6 +224,7 @@ function packets_usage {
   echo
   echo "Options:"
   flowsAndPackets_collector_usage
+  packets_tls_usage
   script_usage
   echo
   echo "Examples:"

@@ -1,0 +1,54 @@
+# Generates steady HTTPS traffic to the OpenSSL test server (nginx + libssl.so).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: openssl-test-traffic
+  namespace: openssl-test
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: curl
+          image: docker.io/curlimages/curl:8.11.1
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              TARGET="${TARGET_URL:-https://openssl-test.openssl-test.svc.cluster.local:8443/}"
+              echo "Traffic to ${TARGET}"
+              i=0
+              while [ "$i" -lt 120 ]; do
+                curl --http1.1 --no-keepalive -sk \
+                  -H 'Authorization: Bearer fake-openssl-client-token' \
+                  -H "X-Fake-Trace-Id: openssl-req-message-${i}" \
+                  -H 'X-Fake-Tenant: demo-openssl' \
+                  -H 'X-NetObserv-Client: openssl-traffic-pod' \
+                  "${TARGET}message?seq=${i}" || true
+                curl --http1.1 --no-keepalive -sk \
+                  -H 'Authorization: Bearer fake-openssl-client-token' \
+                  -H "X-Fake-Trace-Id: openssl-req-items-${i}" \
+                  -H 'X-Fake-Tenant: demo-openssl' \
+                  -H 'X-NetObserv-Client: openssl-traffic-pod' \
+                  "${TARGET}api/items?seq=${i}" || true
+                curl --http1.1 --no-keepalive -sk -X POST \
+                  -H 'Authorization: Bearer fake-openssl-client-token' \
+                  -H "X-Fake-Trace-Id: openssl-req-echo-${i}" \
+                  -H 'X-Fake-Tenant: demo-openssl' \
+                  -H 'X-NetObserv-Client: openssl-traffic-pod' \
+                  -H 'Content-Type: text/plain' \
+                  -d "NETOBSERV-OPENSSL client request seq=${i}" \
+                  "${TARGET}api/echo?seq=${i}" || true
+                i=$((i + 1))
+                sleep 1
+              done
+              echo "done"
