@@ -42,6 +42,10 @@ func writeOutput(filename string, out string) {
 func cleanup() {
 	ilog.Info("Cleaning up...")
 
+	// stop any capture still running from StartCommand, so it can't run its own EXIT trap
+	// while the next spec is setting up
+	e2e.StopStartedCommands(ilog)
+
 	// rename dir flow with filename prefix
 	itlog.Debugf("Removing %s", outputDir)
 	err := os.RemoveAll(outputDir)

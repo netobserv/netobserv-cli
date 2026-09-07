@@ -3,6 +3,7 @@ package e2e
 import (
 	"bufio"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -14,15 +15,61 @@ import (
 )
 
 const (
-	// Keep StartCommandWait at least 20 seconds
-	// to avoid pty to get closed early and ultimately killing process
+	// How long StartCommand lets the command run before snapshotting its output.
+	// The command keeps running afterwards, up to its own --max-time.
 	StartCommandWait  = 20 * time.Second
 	RunCommandTimeout = 60 * time.Second
 )
 
 var (
 	StartupDate = time.Now().Format("20060102-150405")
+
+	// Commands started by StartCommand, which outlive the call. Their PTY master must stay
+	// open: once the last reference is dropped, the runtime finalizer closes the file
+	// descriptor, the kernel sends SIGHUP to the foreground process group and the command dies
+	// early -- running its EXIT trap, which tears the capture down before the test looked at it.
+	startedCommands   []startedCommand
+	startedCommandsMu sync.Mutex
 )
+
+type startedCommand struct {
+	cmd  *exec.Cmd
+	ptmx *os.File
+}
+
+// trackStarted keeps a reference to the PTY master until StopStartedCommands is called, and
+// drains it so its buffer never fills up.
+func trackStarted(cmd *exec.Cmd, ptmx *os.File) {
+	startedCommandsMu.Lock()
+	startedCommands = append(startedCommands, startedCommand{cmd: cmd, ptmx: ptmx})
+	startedCommandsMu.Unlock()
+
+	go func() {
+		_, _ = io.Copy(io.Discard, ptmx)
+	}()
+}
+
+// StopStartedCommands kills every command left running by StartCommand. Call it before deleting
+// the capture resources, otherwise a still-running CLI would reach its own EXIT trap later on and
+// clean up whatever the next test has created in the meantime.
+func StopStartedCommands(log *logrus.Entry) {
+	startedCommandsMu.Lock()
+	pending := startedCommands
+	startedCommands = nil
+	startedCommandsMu.Unlock()
+
+	for _, sc := range pending {
+		if sc.cmd.Process != nil {
+			// pty.Start gives the command its own session, so the negated PID addresses the
+			// whole process group: the CLI script and the oc processes it spawned.
+			if err := syscall.Kill(-sc.cmd.Process.Pid, syscall.SIGKILL); err != nil {
+				log.Debugf("Could not kill process group %d: %v", sc.cmd.Process.Pid, err)
+			}
+			_, _ = sc.cmd.Process.Wait()
+		}
+		_ = sc.ptmx.Close()
+	}
+}
 
 // start command with tty support and wait for some time before returning output
 // the command will keep running after this call
@@ -66,18 +113,14 @@ func StartCommand(log *logrus.Entry, commandName string, arg ...string) (string,
 		}
 	}(outPipe)
 
-	// start async
-	go func() {
-		log.Debug("Starting async ...")
-		ptmx, err := pty.Start(cmd)
-		if err != nil {
-			log.Errorf("Start returned error: %v", err)
-			return
-		}
-		// Note: PTY is intentionally NOT closed here as command continues running
-		// Keep the PTY file descriptor alive to prevent SIGHUP
-		_ = ptmx // Keep reference to prevent premature PTY closure
-	}()
+	log.Debug("Starting ...")
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		log.Errorf("Start returned error: %v", err)
+		return "", err
+	}
+	// The command keeps running after this function returns, so the PTY must not be closed here.
+	trackStarted(cmd, ptmx)
 
 	log.Debugf("Waiting %v ...", StartCommandWait)
 	time.Sleep(StartCommandWait)
