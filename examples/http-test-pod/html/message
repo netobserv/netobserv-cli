@@ -1,0 +1,5 @@
+NETOBSERV-HTTP cleartext probe
+Transport: plain HTTP (no TLS)
+Workload: http-test-pod
+Endpoint: GET /message
+Capture hint: readable in PCA wire packets on port 8080 — select row for HTTP text panel

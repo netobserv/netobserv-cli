@@ -231,6 +231,101 @@ func TestPacketFiltersYAML(t *testing.T) {
 	testCluster.TestEnv().Test(t, f1)
 }
 
+func TestPacketOpenSSLYAML(t *testing.T) {
+	// Run from a temp dir so output is isolated from other packet YAML tests.
+	origDir, err := os.Getwd()
+	assert.Nil(t, err)
+	absCmd, err := filepath.Abs("commands/oc-netobserv")
+	assert.Nil(t, err)
+	tmpDir := t.TempDir()
+	assert.Nil(t, os.Chdir(tmpDir))
+	defer os.Chdir(origDir)
+
+	f1 := features.New("packet openssl yaml").Setup(
+		func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			output, err := RunCommand(ylog, absCmd, "packets",
+				"--port=8443",
+				"--enable_openssl",
+				"--tls_process_allowlist=nginx",
+				"--yaml")
+			assert.Nil(t, err)
+
+			assert.NotEmpty(t, output)
+			assert.Contains(t, output, "creating packet-capture agents")
+			assert.Contains(t, output, "Check the generated YAML file in output folder")
+
+			return ctx
+		},
+	).Assess("check generated yaml has openssl config",
+		func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			var yamls []string
+
+			dirPath := "output"
+			assert.True(t, dirExists(dirPath), "directory %s not found", dirPath)
+			err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					fmt.Println(err)
+				}
+
+				if !info.IsDir() {
+					if strings.Contains(path, "packets_capture") && filepath.Ext(path) == ".yml" {
+						yamls = append(yamls, path)
+					}
+				}
+
+				return nil
+			})
+			assert.Nil(t, err)
+
+			assert.Equal(t, 1, len(yamls))
+			yamlBytes, err := os.ReadFile(yamls[0])
+			assert.Nil(t, err)
+
+			yamlStr := string(yamlBytes[:])
+			yamls = strings.Split(yamlStr, "---")
+
+			// find the DaemonSet
+			var ds string
+			for _, y := range yamls {
+				if strings.Contains(y, "kind: DaemonSet") {
+					ds = y
+					break
+				}
+			}
+			assert.NotEmpty(t, ds, "DaemonSet not found in generated YAML")
+
+			normalized := Normalize(ds)
+
+			// verify OpenSSL tracking is enabled
+			assert.Contains(t, normalized, Normalize(`name: ENABLE_OPENSSL_TRACKING`))
+			assert.Contains(t, normalized, Normalize(`value: "true"`))
+
+			// verify process allowlist is set
+			assert.Contains(t, normalized, Normalize(`name: TLS_PLAINTEXT_PROCESS_ALLOWLIST`))
+			assert.Contains(t, normalized, Normalize(`value: "nginx"`))
+
+			// verify privileged mode
+			assert.Contains(t, normalized, Normalize(`privileged: true`))
+
+			// verify hostPID
+			assert.Contains(t, normalized, Normalize(`hostPID: true`))
+
+			// verify host volume mounts for libssl discovery
+			assert.Contains(t, normalized, Normalize(`name: host-usr`))
+			assert.Contains(t, normalized, Normalize(`mountPath: /host/usr`))
+
+			// verify SYS_PTRACE capability
+			assert.Contains(t, normalized, Normalize(`SYS_PTRACE`))
+
+			// verify port filter
+			assert.Contains(t, ds, `"port": 8443`)
+
+			return ctx
+		},
+	).Feature()
+	testCluster.TestEnv().Test(t, f1)
+}
+
 // test metrics only as YAML output as kind can't manage ServiceMonitor CR
 func TestMetricYAML(t *testing.T) {
 	f1 := features.New("metric yaml").Setup(
