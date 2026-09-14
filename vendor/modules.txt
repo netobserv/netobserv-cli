@@ -167,7 +167,7 @@ github.com/json-iterator/go
 # github.com/lucasb-eyer/go-colorful v1.3.0
 ## explicit; go 1.12
 github.com/lucasb-eyer/go-colorful
-# github.com/mattn/go-sqlite3 v1.14.50
+# github.com/mattn/go-sqlite3 v1.14.52
 ## explicit; go 1.21
 github.com/mattn/go-sqlite3
 # github.com/moby/spdystream v0.5.1
