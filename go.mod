@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/gdamore/tcell/v2 v2.13.10
-	github.com/gopacket/gopacket v1.7.1
+	github.com/gopacket/gopacket v1.7.2
 	github.com/jpillora/sizestr v1.0.0
 	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/navidys/tvxwidgets v0.14.0
