@@ -2,6 +2,8 @@ kind: Namespace
 apiVersion: v1
 metadata:
   name: "{{NAME}}"
+  annotations:
+    openshift.io/node-selector: ""
   labels:
     app: netobserv-cli
     pod-security.kubernetes.io/enforce: privileged
