@@ -10,7 +10,7 @@ require (
 	github.com/navidys/tvxwidgets v0.14.0
 	github.com/netobserv/flowlogs-pipeline v1.12.0-community.0.20260901145451-c8613bab4412
 	github.com/netobserv/netobserv-ebpf-agent v1.12.0-community
-	github.com/onsi/ginkgo/v2 v2.32.1
+	github.com/onsi/ginkgo/v2 v2.33.0
 	github.com/onsi/gomega v1.43.1
 	github.com/openshift/api v0.0.0-20260619095050-5346161d1bf2
 	github.com/openshift/library-go v0.0.0-20260625074842-d80d43df888c

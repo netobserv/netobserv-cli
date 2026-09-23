@@ -205,7 +205,7 @@ github.com/netobserv/flowlogs-pipeline/pkg/utils
 ## explicit; go 1.25.7
 github.com/netobserv/netobserv-ebpf-agent/pkg/utils
 github.com/netobserv/netobserv-ebpf-agent/pkg/utils/networkevents
-# github.com/onsi/ginkgo/v2 v2.32.1
+# github.com/onsi/ginkgo/v2 v2.33.0
 ## explicit; go 1.25.0
 github.com/onsi/ginkgo/v2
 github.com/onsi/ginkgo/v2/config
