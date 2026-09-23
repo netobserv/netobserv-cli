@@ -81,6 +81,7 @@ func TestFlowFiltersYAML(t *testing.T) {
 			assert.Contains(t, yamls[0], "kind: Namespace")
 			assert.Contains(t, yamls[0], "name: \"netobserv-cli\"")
 			assert.Contains(t, Normalize(yamls[0]), Normalize("labels:app:netobserv-clipod-security.kubernetes.io/enforce:privilegedpod-security.kubernetes.io/audit:privilegedopenshift.io/cluster-monitoring:\"true\""))
+			assert.Contains(t, Normalize(yamls[0]), Normalize("annotations:openshift.io/node-selector:\"\""))
 
 			assert.Contains(t, yamls[1], "kind: ServiceAccount")
 			assert.Contains(t, yamls[1], "name: netobserv-cli")
@@ -197,6 +198,7 @@ func TestPacketFiltersYAML(t *testing.T) {
 			assert.Contains(t, yamls[0], "kind: Namespace")
 			assert.Contains(t, yamls[0], "name: \"netobserv-cli\"")
 			assert.Contains(t, Normalize(yamls[0]), Normalize("labels:app:netobserv-clipod-security.kubernetes.io/enforce:privilegedpod-security.kubernetes.io/audit:privilegedopenshift.io/cluster-monitoring:\"true\""))
+			assert.Contains(t, Normalize(yamls[0]), Normalize("annotations:openshift.io/node-selector:\"\""))
 
 			assert.Contains(t, yamls[1], "kind: ServiceAccount")
 			assert.Contains(t, yamls[1], "name: netobserv-cli")
@@ -406,6 +408,7 @@ func TestMetricYAML(t *testing.T) {
 			assert.Contains(t, yamls[0], "kind: Namespace")
 			assert.Contains(t, yamls[0], "name: \"netobserv-cli\"")
 			assert.Contains(t, Normalize(yamls[0]), Normalize("labels:app:netobserv-clipod-security.kubernetes.io/enforce:privilegedpod-security.kubernetes.io/audit:privilegedopenshift.io/cluster-monitoring:\"true\""))
+			assert.Contains(t, Normalize(yamls[0]), Normalize("annotations:openshift.io/node-selector:\"\""))
 
 			assert.Contains(t, yamls[1], "kind: ServiceAccount")
 			assert.Contains(t, yamls[1], "name: netobserv-cli")
