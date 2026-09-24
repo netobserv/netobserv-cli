@@ -150,6 +150,19 @@ func showKernelVersion() {
 	}
 }
 
+// Headless captures use background rendering but must exit so their caller can
+// copy the output and clean up the capture resources.
+func isHeadlessCapture(options string) bool {
+	headless := false
+	for _, option := range strings.Split(options, "|") {
+		key, value, hasValue := strings.Cut(option, "=")
+		if key == "headless" {
+			headless = !hasValue || value == "true"
+		}
+	}
+	return headless
+}
+
 func onLimitReached() bool {
 	shouldExit := false
 	if !captureEnded {
@@ -158,7 +171,7 @@ func onLimitReached() bool {
 		if app != nil && errAdvancedDisplay == nil {
 			app.Stop()
 		}
-		if isBackground {
+		if isBackground && !isHeadlessCapture(options) {
 			err := kubernetes.DeleteDaemonSet(context.Background(), namespace)
 			if err != nil {
 				log.Error(err)

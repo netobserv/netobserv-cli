@@ -15,12 +15,6 @@ jobs:
     steps:
     - name: install make
       run: sudo apt-get install make
-    - name: install oc & kubectl
-      run: |
-        wget https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable-4.15/openshift-client-linux.tar.gz
-        tar xvf openshift-client-linux.tar.gz oc kubectl
-        sudo cp oc kubectl /usr/local/bin
-        oc version
     - name: set up go 1.x
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6
       with:

@@ -12,13 +12,65 @@ spec:
     collector for analysis and visualization. 
   platforms:
   - selector:
-      matchExpressions:
-      - key: "os"
-        operator: "In"
-        values:
-        - darwin
-        - linux
-    {{addURIAndSha "https://github.com/netobserv/network-observability-cli/releases/download/{{ .TagName }}/netobserv-cli.tar.gz" .TagName }}
+      matchLabels:
+        os: linux
+        arch: amd64
+    {{addURIAndSha "https://github.com/netobserv/network-observability-cli/releases/download/{{ .TagName }}/netobserv-cli-linux-amd64.tar.gz" .TagName }}
+    files:
+    - from: "build/netobserv"
+      to: "netobserv"
+    - from: "LICENSE"
+      to: "."
+    bin: netobserv
+  - selector:
+      matchLabels:
+        os: linux
+        arch: arm64
+    {{addURIAndSha "https://github.com/netobserv/network-observability-cli/releases/download/{{ .TagName }}/netobserv-cli-linux-arm64.tar.gz" .TagName }}
+    files:
+    - from: "build/netobserv"
+      to: "netobserv"
+    - from: "LICENSE"
+      to: "."
+    bin: netobserv
+  - selector:
+      matchLabels:
+        os: linux
+        arch: ppc64le
+    {{addURIAndSha "https://github.com/netobserv/network-observability-cli/releases/download/{{ .TagName }}/netobserv-cli-linux-ppc64le.tar.gz" .TagName }}
+    files:
+    - from: "build/netobserv"
+      to: "netobserv"
+    - from: "LICENSE"
+      to: "."
+    bin: netobserv
+  - selector:
+      matchLabels:
+        os: linux
+        arch: s390x
+    {{addURIAndSha "https://github.com/netobserv/network-observability-cli/releases/download/{{ .TagName }}/netobserv-cli-linux-s390x.tar.gz" .TagName }}
+    files:
+    - from: "build/netobserv"
+      to: "netobserv"
+    - from: "LICENSE"
+      to: "."
+    bin: netobserv
+  - selector:
+      matchLabels:
+        os: darwin
+        arch: amd64
+    {{addURIAndSha "https://github.com/netobserv/network-observability-cli/releases/download/{{ .TagName }}/netobserv-cli-darwin-amd64.tar.gz" .TagName }}
+    files:
+    - from: "build/netobserv"
+      to: "netobserv"
+    - from: "LICENSE"
+      to: "."
+    bin: netobserv
+  - selector:
+      matchLabels:
+        os: darwin
+        arch: arm64
+    {{addURIAndSha "https://github.com/netobserv/network-observability-cli/releases/download/{{ .TagName }}/netobserv-cli-darwin-arm64.tar.gz" .TagName }}
     files:
     - from: "build/netobserv"
       to: "netobserv"

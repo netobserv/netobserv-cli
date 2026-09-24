@@ -1,0 +1,7 @@
+
+NetObserv allows you to stop the collection and keep collector or dashboard for post analysis.
+While the capture is running, use the stop command to remove the eBPF agents.
+Find more information at: https://github.com/netobserv/network-observability-cli/
+
+Syntax: netobserv stop
+

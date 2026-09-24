@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 
-source "./scripts/help.sh"
+set -euo pipefail
+
+CLI_BIN=${CLI_BIN:-./build/oc-netobserv}
+
+# Read option descriptions from the compiled Go CLI, the runtime help source.
+usage_options() {
+  "$CLI_BIN" "$1" --help | awk '/^  --/ { print }'
+}
 
 ADOC=./docs/netobserv_cli.adoc
 
@@ -65,10 +72,7 @@ $ oc netobserv flows [<feature_option>] [<command_options>]
 [cols=\"1,1,1\",options=\"header\"]
 |===
 | Option | Description | Default"
-features_usage
-flowsAndPackets_collector_usage
-filters_usage
-flowsAndMetrics_filters_usage
+usage_options flows
 echo -e "|==="
 # flows example
 echo "
@@ -92,8 +96,7 @@ $ oc netobserv packets [<option>]
 [cols=\"1,1,1\",options=\"header\"]
 |===
 | Option | Description | Default"
-flowsAndPackets_collector_usage
-filters_usage
+usage_options packets
 echo -e "|==="
 # packets example
 echo "
@@ -116,11 +119,7 @@ $ oc netobserv metrics [<option>]
 [cols=\"1,1,1\",options=\"header\"]
 |===
 | Option | Description | Default"
-features_usage
-metrics_collector_usage
-filters_usage
-metrics_options
-flowsAndMetrics_filters_usage
+usage_options metrics
 echo -e "|==="
 # Metrics example
 echo "

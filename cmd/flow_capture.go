@@ -48,11 +48,24 @@ func startFlowCollector() {
 	if err != nil {
 		log.Fatalf("Creating output file failed: %v", err)
 	}
+	limitReached := false
+	// Notify the UI (or keep a detached collector alive) only after deferred
+	// output flushes and closure have finished.
+	defer func() {
+		if limitReached && !onLimitReached() {
+			<-utils.ExitChannel()
+		}
+	}()
+
 	defer f.Close()
 	log.Debugf("Created flow logs txt file: %s", f.Name())
 
 	// Initialize sqlite DB
 	db := initFlowDB(filename)
+	if db == nil {
+		return
+	}
+	defer db.Close()
 	log.Debug("Initialized database")
 
 	flowPackets := make(chan *genericmap.Flow, 100)
@@ -64,17 +77,26 @@ func startFlowCollector() {
 	log.Debug("Started collector")
 	collectorStarted = true
 
-	go func() {
-		<-utils.ExitChannel()
-		log.Debug("Ending collector")
-		close(flowPackets)
-		collector.Close()
-		db.Close()
-		log.Debug("Done")
-	}()
+	defer collector.Close()
+	timer := time.NewTimer(maxTime - currentTime().Sub(startupTime))
+	defer timer.Stop()
 
 	log.Debug("Ready ! Waiting for flows...")
-	for fp := range flowPackets {
+	for {
+		var fp *genericmap.Flow
+		select {
+		case <-timer.C:
+			limitReached = true
+			log.Infof("Capture reached %s, exiting collection...", maxTime)
+			return
+		case <-utils.ExitChannel():
+			return
+		case record, ok := <-flowPackets:
+			if !ok {
+				return
+			}
+			fp = record
+		}
 		if !captureStarted {
 			log.Debugf("Received first %d flows", len(flowPackets))
 		}
@@ -108,20 +130,9 @@ func startFlowCollector() {
 		// terminate capture if max bytes reached
 		totalBytes += int64(bytes)
 		if totalBytes > maxBytes {
-			if exit := onLimitReached(); exit {
-				log.Infof("Capture reached %s, exiting now...", sizestr.ToString(maxBytes))
-				return
-			}
-		}
-
-		// terminate capture if max time reached
-		now := currentTime()
-		duration := now.Sub(startupTime)
-		if duration > maxTime {
-			if exit := onLimitReached(); exit {
-				log.Infof("Capture reached %s, exiting now...", maxTime)
-				return
-			}
+			limitReached = true
+			log.Infof("Capture reached %s, exiting collection...", sizestr.ToString(maxBytes))
+			return
 		}
 
 		captureStarted = true

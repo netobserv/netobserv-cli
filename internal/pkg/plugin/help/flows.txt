@@ -1,0 +1,61 @@
+
+NetObserv allows you to capture flows from your cluster.
+Find more information at: https://github.com/netobserv/network-observability-cli/
+
+Syntax: netobserv flows [options]
+
+Features:
+  --enable_all:                 enable all eBPF features                              (default: false)
+  --enable_dns:                 enable DNS tracking                                   (default: false)
+  --enable_ipsec:               enable IPsec tracking                                 (default: false)
+  --enable_network_events:      enable network events monitoring                      (default: false)
+  --enable_pkt_translation:     enable packet translation                             (default: false)
+  --enable_pkt_drop:            enable packet drop                                    (default: false)
+  --enable_rtt:                 enable RTT tracking                                   (default: false)
+  --enable_udn_mapping:         enable User Defined Network mapping                   (default: false)
+  --get-subnets:                get subnets information                               (default: false)
+  --privileged:                 force eBPF agent privileged mode                      (default: auto)
+  --sampling:                   packets sampling interval                             (default: 1)
+
+Filters:
+  --action:                     filter action                                         (default: Accept)
+  --cidr:                       filter CIDR                                           (default: 0.0.0.0/0)
+  --direction:                  filter direction                                      (default: n/a)
+  --dport:                      filter destination port                               (default: n/a)
+  --dport_range:                filter destination port range                         (default: n/a)
+  --dports:                     filter on either of two destination ports             (default: n/a)
+  --drops:                      filter flows with only dropped packets                (default: false)
+  --icmp_code:                  filter ICMP code                                      (default: n/a)
+  --icmp_type:                  filter ICMP type                                      (default: n/a)
+  --node-selector:              capture on specific nodes                             (default: n/a)
+  --peer_ip:                    filter peer IP                                        (default: n/a)
+  --peer_cidr:                  filter peer CIDR                                      (default: n/a)
+  --port_range:                 filter port range                                     (default: n/a)
+  --port:                       filter port                                           (default: n/a)
+  --ports:                      filter on either of two ports                         (default: n/a)
+  --protocol:                   filter protocol                                       (default: n/a)
+  --query:                      filter flows using a custom query                     (default: n/a)
+  --sport_range:                filter source port range                              (default: n/a)
+  --sport:                      filter source port                                    (default: n/a)
+  --sports:                     filter on either of two source ports                  (default: n/a)
+  --tcp_flags:                  filter TCP flags                                      (default: n/a)
+  --interfaces:                 list of interfaces to monitor, comma separated        (default: n/a)
+  --exclude_interfaces:         list of interfaces to exclude, comma separated        (default: lo)
+
+Options:
+  --background:                 run in background                                     (default: false)
+  --copy:                       copy the output files locally                         (default: prompt)
+  --log-level:                  components logs                                       (default: info)
+  --max-time:                   maximum capture time                                  (default: 5m)
+  --max-bytes:                  maximum capture bytes                                 (default: 50000000 = 50MB)
+  --yaml:                       generate YAML without applying it                     (default: false)
+
+Examples:
+  Capture dropped flows on all nodes:
+    netobserv flows --drops
+  Capture flows in the background, for maximum 15 minutes, TCP on 8080 or UDP, and copy output locally:
+    netobserv flows --background --max-time=15m --protocol=TCP --port=8080 or --protocol=UDP
+  Capture flows from any namespace starting with 'app-': (for --query doc, see also: https://github.com/netobserv/flowlogs-pipeline/blob/main/docs/filtering.md)
+    netobserv flows --query='SrcK8S_Namespace=~"app-.*"'
+  Capture flows from/to a specific pod pattern on a specific node:
+    netobserv flows --node-selector=kubernetes.io/hostname:my-node --query='SrcK8S_Name=~".*my-pod.*" or DstK8S_Name=~".*my-pod.*"'

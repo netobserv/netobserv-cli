@@ -1,0 +1,7 @@
+
+NetObserv allows you to capture flows and packets asynchronously using the --background option.
+While the capture is running in background, you can connect to the collector pod to see the progression using the follow command.
+Find more information at: https://github.com/netobserv/network-observability-cli/
+
+Syntax: netobserv follow
+

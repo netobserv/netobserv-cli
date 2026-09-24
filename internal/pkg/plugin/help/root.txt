@@ -1,0 +1,46 @@
+
+NetObserv allows you to capture flows, packets and metrics from your cluster.
+Find more information at: https://github.com/netobserv/network-observability-cli/
+
+Syntax: netobserv [flows|packets|metrics|follow|stop|copy|cleanup|version] [options]
+
+Main commands:
+  flows      Capture flows information in JSON format using collector pod.
+  metrics    Capture metrics information in Prometheus using a ServiceMonitor (OCP cluster only).
+  packets    Capture packets information in pcap format using collector pod.
+
+Extra commands:
+  cleanup    Remove netobserv components and configurations.
+  copy       Copy collector generated files locally.
+  follow     Follow collector logs when running in background.
+  stop       Stop collection by removing agent daemonset.
+  version    Print software version.
+
+Use --help with any command for more details (e.g. netobserv flows --help)
+
+Flow capture examples:
+  Capture dropped flows on all nodes:
+    netobserv flows --drops
+  Capture flows in the background, for maximum 15 minutes, TCP on 8080 or UDP, and copy output locally:
+    netobserv flows --background --max-time=15m --protocol=TCP --port=8080 or --protocol=UDP
+  Capture flows from any namespace starting with 'app-': (for --query doc, see also: https://github.com/netobserv/flowlogs-pipeline/blob/main/docs/filtering.md)
+    netobserv flows --query='SrcK8S_Namespace=~"app-.*"'
+  Capture flows from/to a specific pod pattern on a specific node:
+    netobserv flows --node-selector=kubernetes.io/hostname:my-node --query='SrcK8S_Name=~".*my-pod.*" or DstK8S_Name=~".*my-pod.*"'
+
+Packet capture examples:
+  Capture packets on port 8080:
+    netobserv packets --port=8080
+  Capture packets on specific nodes (labeled with 'netobserv=true') and port, for a maximum of 100MB:
+    netobserv packets --node-selector=netobserv:true --port=80 --max-bytes=100000000
+
+Metrics capture examples:
+  Capture default cluster metrics including packet drop, dns, rtt, network events packet translation and UDN mapping features:
+    netobserv metrics --enable_all
+  Capture node and namespace drop metrics, based on keywords include list:
+    netobserv metrics --drops --include_list=node,namespace
+  Capture metrics in the background for 1 day:
+    netobserv metrics --background --max-time=24h
+    Then open the URL provided by the command to visualize the netobserv-cli dashboard anytime during or after the run.
+
+

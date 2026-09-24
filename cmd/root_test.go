@@ -150,3 +150,30 @@ func tickTimeAndAddBytes() {
 
 	totalBytes++
 }
+
+func TestHeadlessCaptureOptions(t *testing.T) {
+	for _, tc := range []struct {
+		options string
+		want    bool
+	}{
+		{"background=true", false},
+		{"headless|background=true", true},
+		{"headless=true|background=true", true},
+		{"headless=false|background=true", false},
+		{"headless|headless=false", false},
+		{"headless=false|headless=true", true},
+		{"filter=headless", false},
+	} {
+		t.Run(tc.options, func(t *testing.T) {
+			assert.Equal(t, tc.want, isHeadlessCapture(tc.options))
+		})
+	}
+}
+
+func TestHeadlessCaptureExitsAtLimit(t *testing.T) {
+	oldBackground, oldEnded, oldOptions := isBackground, captureEnded, options
+	t.Cleanup(func() { isBackground, captureEnded, options = oldBackground, oldEnded, oldOptions })
+	isBackground, captureEnded, options = true, false, "headless|background=true"
+	assert.True(t, onLimitReached())
+	assert.True(t, captureEnded)
+}

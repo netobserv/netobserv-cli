@@ -1,0 +1,174 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: netobserv-cli
+  namespace: "netobserv-cli"
+  labels:
+    app: netobserv-cli
+spec:
+  selector:
+    matchLabels:
+      app: netobserv-cli
+  template:
+    metadata:
+      labels:
+        app: netobserv-cli
+    spec:
+      serviceAccountName: netobserv-cli
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: netobserv-cli
+          image: "quay.io/netobserv/netobserv-ebpf-agent:main"
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: true
+            capabilities:
+              add:
+                - "BPF"
+                - "PERFMON"
+                - "NET_ADMIN"
+              drop:
+                - ALL
+            privileged: true
+            readOnlyRootFilesystem: true
+            runAsUser: 0
+          env:
+            - name: CACHE_ACTIVE_TIMEOUT
+              value: "1s"
+            - name: METRICS_ENABLE
+              value: "false"
+            - name: LOG_LEVEL
+              value: info
+            - name: INTERFACES
+              value: ""
+            - name: EXCLUDE_INTERFACES
+              value: "lo"
+            - name: PREFERRED_INTERFACE_FOR_MAC_PREFIX
+              value: "0a:58=eth0"
+            - name: SAMPLING
+              value: "1"
+            - name: ENABLE_RTT
+              value: "false"
+            - name: ENABLE_PKT_DROPS
+              value: "true"
+            - name: ENABLE_DNS_TRACKING
+              value: "false"
+            - name: ENABLE_NETWORK_EVENTS_MONITORING
+              value: "false"
+            - name: ENABLE_UDN_MAPPING
+              value: "false"
+            - name: ENABLE_PKT_TRANSLATION
+              value: "false"
+            - name: ENABLE_IPSEC_TRACKING
+              value: "false"
+            - name: FLOW_FILTER_RULES
+              value: >-
+                [{"direction": "Ingress", "ip_cidr": "10.0.0.0/8", "protocol": "TCP", "source_port": 0, "destination_port": 443, "port": 80, "source_port_range": "1000-2000", "source_ports": "80,443", "destination_port_range": "80-90", "destination_ports": "53,54", "port_range": "100-200", "ports": "22,23", "icmp_type": 8, "icmp_code": 0, "peer_ip": "10.1.1.1", "peer_cidr": "10.2.0.0/16", "action": "Reject", "tcp_flags": "SYN", "drops": true}]
+            - name: TC_ATTACH_MODE
+              value: "any"
+            - name: EXPORT
+              value: "direct-flp"
+            - name: FLP_CONFIG
+              value: |
+                {
+                  "log-level": "trace",
+                  "metricsSettings": {
+                    "disableGlobalServer": true
+                  },
+                  "parameters": [
+                    {
+                      "name": "enrich",
+                      "transform": {
+                        "type": "network",
+                        "network": {
+                          "rules": [
+                            {
+                              "type": "add_kubernetes",
+                              "kubernetes": {
+                                "add_zone": true,
+                                "ipField": "SrcAddr",
+                                "interfacesField": "Interfaces",
+                                "udnsField": "Udns",
+                                "macField": "SrcMac",
+                                "output": "SrcK8S"
+                              }
+                            },
+                            {
+                              "type": "add_kubernetes",
+                              "kubernetes": {
+                                "add_zone": true,
+                                "ipField": "DstAddr",
+                                "interfacesField": "Interfaces",
+                                "udnsField": "Udns",
+                                "macField": "DstMac",
+                                "output": "DstK8S"
+                              }
+                            },
+                            {
+                              "type": "reinterpret_direction"
+                            }
+                          ],
+                          "directionInfo": {
+                            "reporterIPField": "AgentIP",
+                            "srcHostField": "SrcK8S_HostIP",
+                            "dstHostField": "DstK8S_HostIP",
+                            "flowDirectionField": "FlowDirection"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "name": "send",
+                      "write": {
+                        "type": "grpc",
+                        "grpc": {
+                          "targetHost": "collector.netobserv-cli.svc.cluster.local",
+                          "targetPort": 9999
+                        }
+                      }
+                    }
+                  ],
+                  "pipeline": [
+                    {
+                      "name": "enrich",
+                      "follows": "preset-ingester"
+                    },
+                    {
+                      "name": "send",
+                      "follows": "enrich"
+                    }
+                  ]
+                }
+          volumeMounts:
+            - name: bpf-kernel-debug
+              mountPath: /sys/kernel/debug
+              mountPropagation: HostToContainer
+            - name: var-run-ovn
+              mountPath: /var/run/ovn
+              mountPropagation: HostToContainer
+            - name: var-run-ovs
+              mountPath: /var/run/openvswitch
+              mountPropagation: HostToContainer
+            - name: var-run-netns
+              mountPath: /var/run/netns
+              mountPropagation: HostToContainer
+      volumes:
+        - name: bpf-kernel-debug
+          hostPath:
+            path: /sys/kernel/debug
+            type: Directory
+        - name: var-run-ovn
+          hostPath:
+            path: /var/run/ovn-ic
+            type: DirectoryOrCreate
+        - name: var-run-ovs
+          hostPath:
+            path: /var/run/openvswitch
+            type: DirectoryOrCreate
+        - name: var-run-netns
+          hostPath:
+            path: /var/run/netns
+            type: Directory

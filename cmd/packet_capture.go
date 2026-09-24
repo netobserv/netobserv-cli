@@ -54,6 +54,7 @@ func runPacketCapture(_ *cobra.Command, _ []string) {
 	}
 }
 
+//nolint:cyclop
 func startPacketCollector() {
 	if len(filename) > 0 {
 		log.Infof("Starting Packet Capture for %s...", filename)
@@ -68,6 +69,15 @@ func startPacketCollector() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	limitReached := false
+	// Notify the UI (or keep a detached collector alive) only after deferred
+	// output flushes and closure have finished.
+	defer func() {
+		if limitReached && !onLimitReached() {
+			<-utils.ExitChannel()
+		}
+	}()
+
 	defer f.Close()
 
 	var plaintextLog io.WriteCloser
@@ -86,7 +96,6 @@ func startPacketCollector() {
 		log.Error("Error while creating writer", err)
 		return
 	}
-	defer ngw.Flush()
 
 	// Register the writer so a SIGTERM can flush buffered packets before the
 	// process exits; without this the last buffered packet(s) are lost and the
@@ -94,11 +103,18 @@ func startPacketCollector() {
 	setActivePacketWriter(ngw, f)
 	defer clearActivePacketWriter()
 
+	keylogDone := make(chan struct{})
+	var keylogWorker sync.WaitGroup
+	defer func() { close(keylogDone); keylogWorker.Wait() }()
 	if tlsKeylogPath != "" {
 		if err := embedTLSKeylog(ngw, tlsKeylogPath); err != nil {
 			log.Warnf("TLS keylog embed failed: %v", err)
 		}
-		go watchTLSKeylog(ngw, tlsKeylogPath)
+		keylogWorker.Add(1)
+		go func() {
+			defer keylogWorker.Done()
+			watchTLSKeylog(ngw, tlsKeylogPath, keylogDone)
+		}()
 	}
 
 	flowPackets := make(chan *genericmap.Flow, 100)
@@ -110,13 +126,30 @@ func startPacketCollector() {
 	log.Debug("Started collector")
 	collectorStarted = true
 
-	go func() {
-		<-utils.ExitChannel()
-		close(flowPackets)
-		collector.Close()
-	}()
+	defer collector.Close()
+	timer := time.NewTimer(maxTime - currentTime().Sub(startupTime))
+	defer timer.Stop()
 
-	for fp := range flowPackets {
+	log.Trace("Ready ! Waiting for packets...")
+	for {
+		var fp *genericmap.Flow
+		select {
+		case <-timer.C:
+			limitReached = true
+			log.Infof("Capture reached %s, exiting collection...", maxTime)
+			return
+		case <-utils.ExitChannel():
+			return
+		case record, ok := <-flowPackets:
+			if !ok {
+				return
+			}
+			fp = record
+		}
+		if !captureStarted {
+			log.Debugf("Received first %d packets", len(flowPackets))
+		}
+
 		if stopReceived {
 			return
 		}
@@ -134,11 +167,7 @@ func startPacketCollector() {
 			if plaintextLog != nil {
 				writePlaintextJSONL(plaintextLog, &genericMap)
 			}
-			continue
-		}
-
-		data, ok := genericMap["Data"]
-		if ok {
+		} else if data, ok := genericMap["Data"]; ok {
 			go AppendFlow(genericMap.Copy())
 			writePacketData(ngw, &genericMap, &data)
 		} else {
@@ -147,18 +176,9 @@ func startPacketCollector() {
 
 		totalBytes += int64(len(fp.GenericMap.Value))
 		if totalBytes > maxBytes {
-			if exit := onLimitReached(); exit {
-				log.Infof("Capture reached %s, exiting now...", sizestr.ToString(maxBytes))
-				return
-			}
-		}
-
-		now := currentTime()
-		if int(now.Sub(startupTime)) > int(maxTime) {
-			if exit := onLimitReached(); exit {
-				log.Infof("Capture reached %s, exiting now...", maxTime)
-				return
-			}
+			limitReached = true
+			log.Infof("Capture reached %s, exiting collection...", sizestr.ToString(maxBytes))
+			return
 		}
 
 		captureStarted = true
@@ -258,6 +278,7 @@ var (
 func setActivePacketWriter(ngw *pcapgo.NgWriter, f *os.File) {
 	ngwMu.Lock()
 	defer ngwMu.Unlock()
+	keylogOffset = 0
 	activeNgw = ngw
 	activePcapFile = f
 }
@@ -265,6 +286,11 @@ func setActivePacketWriter(ngw *pcapgo.NgWriter, f *os.File) {
 func clearActivePacketWriter() {
 	ngwMu.Lock()
 	defer ngwMu.Unlock()
+	if activeNgw != nil {
+		if err := activeNgw.Flush(); err != nil {
+			log.Errorf("failed to flush pcapng writer: %v", err)
+		}
+	}
 	activeNgw = nil
 	activePcapFile = nil
 }
@@ -304,12 +330,14 @@ func embedTLSKeylog(ngw *pcapgo.NgWriter, path string) error {
 	return nil
 }
 
-func watchTLSKeylog(ngw *pcapgo.NgWriter, path string) {
+func watchTLSKeylog(ngw *pcapgo.NgWriter, path string, done <-chan struct{}) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
-	for range ticker.C {
-		if stopReceived {
+	for {
+		select {
+		case <-done:
 			return
+		case <-ticker.C:
 		}
 		f, err := os.Open(path)
 		if err != nil {

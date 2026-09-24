@@ -5,7 +5,6 @@ package integrationtests
 import (
 	"os"
 	"os/exec"
-	"strings"
 	"testing"
 
 	g "github.com/onsi/ginkgo/v2"
@@ -47,8 +46,10 @@ var _ = g.BeforeSuite(func() {
 		o.Expect(err).NotTo(o.HaveOccurred(), "Failed to create artifact directory")
 	}
 
-	cmd := exec.Command("which", "oc-netobserv")
-	out, err := cmd.Output()
+	if namespace := os.Getenv("NETOBSERV_NAMESPACE"); namespace != "" {
+		cliNS = namespace
+	}
+	var err error
+	ocNetObservBinPath, err = exec.LookPath("oc-netobserv")
 	o.Expect(err).NotTo(o.HaveOccurred())
-	ocNetObservBinPath = strings.TrimSuffix(string(out), "\n")
 })

@@ -11,8 +11,39 @@ On Openshift environments, you can also capture metrics in your monitoring stack
 
 To run this CLI, you will need:
 - A running kubernetes / OpenShift cluster
-- either `oc` or `kubectl` command installed and connected to your cluster
+- A kubeconfig with valid cluster credentials (`KUBECONFIG` or `~/.kube/config`)
 - Cluster admin rights
+
+## Standalone Go CLI
+
+`oc-netobserv` is a native Go executable. Running it directly does not require
+`oc`, `kubectl`, Bash, or `yq` on your machine. It uses the Kubernetes Go client
+libraries and your kubeconfig. If your kubeconfig uses an external credential
+plugin, that credential plugin must still be available.
+
+Build and run it with Go (the version in `go.mod`):
+
+```sh
+make oc-commands
+./build/oc-netobserv flows --protocol=TCP --port=8080
+./build/oc-netobserv packets --port=443 --background
+./build/oc-netobserv follow
+./build/oc-netobserv copy
+./build/oc-netobserv cleanup
+```
+
+Existing commands, capture flags, `or` filter groups, image overrides, and
+`NETOBSERV_NAMESPACE` remain supported. Optional `--kubeconfig`, `--context`,
+`--namespace`, and `--output-dir` arguments can be supplied after the command.
+Use the same connection and namespace arguments for follow-up commands.
+`--yaml` generates manifests without contacting the cluster, unless
+`--get-subnets` explicitly requests cluster network information.
+
+`make kubectl-commands` builds the same executable as `kubectl-netobserv`.
+Installing either binary on `PATH` also allows the existing `oc netobserv` or
+`kubectl netobserv` invocation when those tools are installed.
+Release archives are specific to the OS and architecture; `make release-all`
+builds Linux amd64/arm64/ppc64le/s390x and macOS amd64/arm64 artifacts.
 
 ## Getting started with Krew
 

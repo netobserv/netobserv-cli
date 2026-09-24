@@ -66,11 +66,6 @@ $ oc netobserv flows [<feature_option>] [<command_options>]
 |--get-subnets|               get subnets information                               | false
 |--privileged|                force eBPF agent privileged mode                      | auto
 |--sampling|                  packets sampling interval                             | 1
-|--background|                run in background                                     | false
-|--copy|                      copy the output files locally                         | prompt
-|--log-level|                 components logs                                       | info
-|--max-time|                  maximum capture time                                  | 5m
-|--max-bytes|                 maximum capture bytes                                 | 50000000 = 50MB
 |--action|                    filter action                                         | Accept
 |--cidr|                      filter CIDR                                           | 0.0.0.0/0
 |--direction|                 filter direction                                      | -
@@ -94,6 +89,12 @@ $ oc netobserv flows [<feature_option>] [<command_options>]
 |--tcp_flags|                 filter TCP flags                                      | -
 |--interfaces|                list of interfaces to monitor, comma separated        | -
 |--exclude_interfaces|        list of interfaces to exclude, comma separated        | lo
+|--background|                run in background                                     | false
+|--copy|                      copy the output files locally                         | prompt
+|--log-level|                 components logs                                       | info
+|--max-time|                  maximum capture time                                  | 5m
+|--max-bytes|                 maximum capture bytes                                 | 50000000 = 50MB
+|--yaml|                      generate YAML without applying it                     | false
 |===
 
 .Example running flows capture on TCP protocol and port 49051 with PacketDrop and RTT features enabled:
@@ -114,11 +115,6 @@ $ oc netobserv packets [<option>]
 [cols="1,1,1",options="header"]
 |===
 | Option | Description | Default
-|--background|                run in background                                     | false
-|--copy|                      copy the output files locally                         | prompt
-|--log-level|                 components logs                                       | info
-|--max-time|                  maximum capture time                                  | 5m
-|--max-bytes|                 maximum capture bytes                                 | 50000000 = 50MB
 |--action|                    filter action                                         | Accept
 |--cidr|                      filter CIDR                                           | 0.0.0.0/0
 |--direction|                 filter direction                                      | -
@@ -140,6 +136,12 @@ $ oc netobserv packets [<option>]
 |--sport|                     filter source port                                    | -
 |--sports|                    filter on either of two source ports                  | -
 |--tcp_flags|                 filter TCP flags                                      | -
+|--background|                run in background                                     | false
+|--copy|                      copy the output files locally                         | prompt
+|--log-level|                 components logs                                       | info
+|--max-time|                  maximum capture time                                  | 5m
+|--max-bytes|                 maximum capture bytes                                 | 50000000 = 50MB
+|--yaml|                      generate YAML without applying it                     | false
 |===
 
 .Example running packets capture on TCP protocol and port 49051:
@@ -170,9 +172,6 @@ $ oc netobserv metrics [<option>]
 |--get-subnets|               get subnets information                               | false
 |--privileged|                force eBPF agent privileged mode                      | auto
 |--sampling|                  packets sampling interval                             | 1
-|--background|                run in background                                     | false
-|--log-level|                 components logs                                       | info
-|--max-time|                  maximum capture time                                  | 1h
 |--action|                    filter action                                         | Accept
 |--cidr|                      filter CIDR                                           | 0.0.0.0/0
 |--direction|                 filter direction                                      | -
@@ -194,9 +193,13 @@ $ oc netobserv metrics [<option>]
 |--sport|                     filter source port                                    | -
 |--sports|                    filter on either of two source ports                  | -
 |--tcp_flags|                 filter TCP flags                                      | -
-|--include_list|              list of metric names to generate, comma separated     | namespace_flows_total,node_ingress_bytes_total,node_egress_bytes_total,workload_ingress_bytes_total
 |--interfaces|                list of interfaces to monitor, comma separated        | -
 |--exclude_interfaces|        list of interfaces to exclude, comma separated        | lo
+|--background|                run in background                                     | false
+|--log-level|                 components logs                                       | info
+|--max-time|                  maximum capture time                                  | 1h
+|--yaml|                      generate YAML without applying it                     | false
+|--include_list|              list of metric names to generate, comma separated     | namespace_flows_total,node_ingress_bytes_total,node_egress_bytes_total,workload_ingress_bytes_total
 |===
 
 .Example running metrics capture for TCP drops

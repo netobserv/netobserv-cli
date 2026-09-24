@@ -1,0 +1,8 @@
+
+NetObserv allows you to copy locally the captured flows or packets from the collector pod.
+While the collector is running, use the copy command to copy the output file(s).
+To avoid modifications during the copy, it's recommended to stop the capture
+Find more information at: https://github.com/netobserv/network-observability-cli/
+
+Syntax: netobserv copy
+

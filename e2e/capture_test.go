@@ -4,13 +4,16 @@ package e2e
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/gopacket/gopacket/pcapgo"
 	"github.com/netobserv/network-observability-cli/e2e/cluster"
 	"github.com/stretchr/testify/assert"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
@@ -43,7 +46,7 @@ func TestMain(m *testing.M) {
 
 func TestFlowCapture(t *testing.T) {
 	f1 := features.New("flow capture").Setup(
-		func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+		func(ctx context.Context, t *testing.T, _ *envconf.Config) context.Context {
 			timer := time.AfterFunc(ExportLogsTimeout, func() {
 				agentLogs := testCluster.GetAgentLogs()
 				err := os.WriteFile(path.Join(testCluster.GetLogsDir(), StartupDate+"-flowAgentLogs"), []byte(agentLogs), 0666)
@@ -51,9 +54,11 @@ func TestFlowCapture(t *testing.T) {
 			})
 			defer timer.Stop()
 
-			output, err := RunCommandAndTerminate(clog, "commands/oc-netobserv", "flows", "--log-level=trace")
-			// TODO: find a way to avoid error here; this is probably related to SIGTERM instead of CTRL + C call
-			//assert.Nil(t, err)
+			output, err := RunCommand(clog, "commands/oc-netobserv", "flows", "--log-level=trace", "--sampling=1", "--headless", "--max-time=20s", "--copy=true")
+			// Wait for the collection deadline and output flush before copying.
+			if !assert.NoError(t, err, output) {
+				t.FailNow()
+			}
 
 			err = os.WriteFile(path.Join("output", StartupDate+"-flowOutput"), []byte(output), 0666)
 			assert.Nil(t, err)
@@ -69,12 +74,12 @@ func TestFlowCapture(t *testing.T) {
 			// check that CLI is running
 			assert.Contains(t, output, "Starting Flow Capture...")
 			assert.Contains(t, output, "Started collector")
-			// check that script terminated
-			assert.Contains(t, output, "command terminated")
+			// Successful completion must include reaching the collection limit.
+			assert.Contains(t, output, "exiting collection")
 			return ctx
 		},
 	).Assess("check downloaded output flow files",
-		func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+		func(ctx context.Context, t *testing.T, _ *envconf.Config) context.Context {
 			var jsons []string
 			var dbs []string
 
@@ -98,13 +103,17 @@ func TestFlowCapture(t *testing.T) {
 			assert.Nil(t, err)
 
 			// check json file
-			assert.Equal(t, 1, len(jsons))
+			if !assert.Len(t, jsons, 1) {
+				t.FailNow()
+			}
 			jsonBytes, err := os.ReadFile(jsons[0])
 			assert.Nil(t, err)
 			assert.Contains(t, string(jsonBytes), "AgentIP")
 
 			// check db file
-			assert.Equal(t, 1, len(dbs))
+			if !assert.Len(t, dbs, 1) {
+				t.FailNow()
+			}
 			dbBytes, err := os.ReadFile(dbs[0])
 			assert.Nil(t, err)
 			assert.Contains(t, string(dbBytes), "SQLite format")
@@ -116,7 +125,7 @@ func TestFlowCapture(t *testing.T) {
 
 func TestPacketCapture(t *testing.T) {
 	f1 := features.New("packet capture").Setup(
-		func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+		func(ctx context.Context, t *testing.T, _ *envconf.Config) context.Context {
 			timer := time.AfterFunc(ExportLogsTimeout, func() {
 				agentLogs := testCluster.GetAgentLogs()
 				err := os.WriteFile(path.Join(testCluster.GetLogsDir(), StartupDate+"-packetAgentLogs"), []byte(agentLogs), 0666)
@@ -124,9 +133,11 @@ func TestPacketCapture(t *testing.T) {
 			})
 			defer timer.Stop()
 
-			output, err := RunCommandAndTerminate(clog, "commands/oc-netobserv", "packets", "--log-level=trace", "--protocol=TCP", "--port=6443")
-			// TODO: find a way to avoid error here; this is probably related to SIGTERM instead of CTRL + C call
-			//assert.Nil(t, err)
+			output, err := RunCommand(clog, "commands/oc-netobserv", "packets", "--log-level=trace", "--protocol=TCP", "--port=6443", "--headless", "--max-time=20s", "--copy=true")
+			// Wait for the collection deadline and output flush before copying.
+			if !assert.NoError(t, err, output) {
+				t.FailNow()
+			}
 
 			err = os.WriteFile(path.Join("output", StartupDate+"-packetOutput"), []byte(output), 0666)
 			assert.Nil(t, err)
@@ -142,12 +153,12 @@ func TestPacketCapture(t *testing.T) {
 			// check that CLI is running
 			assert.Contains(t, output, "Starting Packet Capture...")
 			assert.Contains(t, output, "Started collector")
-			// check that script terminated
-			assert.Contains(t, output, "command terminated")
+			// Successful completion must include reaching the collection limit.
+			assert.Contains(t, output, "exiting collection")
 			return ctx
 		},
 	).Assess("check downloaded output pcap files",
-		func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+		func(ctx context.Context, t *testing.T, _ *envconf.Config) context.Context {
 			var pcaps []string
 
 			dirPath := path.Join("output", "pcap")
@@ -167,13 +178,33 @@ func TestPacketCapture(t *testing.T) {
 			})
 			assert.Nil(t, err)
 
-			// check pcap file
-			assert.Equal(t, 1, len(pcaps))
-			pcapBytes, err := os.ReadFile(pcaps[0])
-			assert.Nil(t, err)
-
-			// check pcap magic number
-			assert.Equal(t, []byte{0x4d, 0x3c, 0x2b, 0x1a}, pcapBytes[8:12])
+			// Decode the complete file: a magic number alone misses truncation.
+			if !assert.Len(t, pcaps, 1) {
+				t.FailNow()
+			}
+			f, err := os.Open(pcaps[0])
+			if !assert.NoError(t, err) {
+				t.FailNow()
+			}
+			defer f.Close()
+			reader, err := pcapgo.NewNgReader(f, pcapgo.DefaultNgReaderOptions)
+			if !assert.NoError(t, err) {
+				t.FailNow()
+			}
+			packets := 0
+			for {
+				_, _, err = reader.ReadPacketData()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if !assert.NoError(t, err) {
+					t.FailNow()
+				}
+				packets++
+			}
+			if !assert.Positive(t, packets, "expected API traffic in capture") {
+				t.FailNow()
+			}
 
 			return ctx
 		},
