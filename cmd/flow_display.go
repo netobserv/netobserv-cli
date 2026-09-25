@@ -24,18 +24,27 @@ type TableData struct {
 	tview.TableContentReadOnly
 }
 
+var keepCount = defaultKeepCount // flows/rows kept in memory (general buffer)
+
 const (
-	keepCount            = 100 // flows to keep in memory
-	defaultFlowShowCount = 30  // flows to display
-	defaultExtraWidth    = 5   // additionnal column width
+	defaultKeepCount           = 100 // flow rows, and non-TLS packet-capture rows, kept in memory
+	defaultWirePacketKeepCount = 200 // wire PCA rows when TLS capture is on
+	defaultPlaintextKeepCount  = 300 // TLS plaintext rows when TLS capture is on
+	defaultFlowShowCount       = 30  // flows to display
+	defaultExtraWidth          = 5   // additionnal column width
+
+	payloadKindWire      = "wire"
+	payloadKindPlaintext = "plaintext"
 )
 
 var (
-	flowIndex       = 0
-	regexes         = []string{}
-	lastFlows       = []config.GenericMap{}
-	suggestions     = []string{}
-	selectedColumns = []string{}
+	flowIndex          = 0
+	regexes            = []string{}
+	lastFlows          = []config.GenericMap{}
+	lastWirePackets    = []config.GenericMap{}
+	lastPlaintextFlows = []config.GenericMap{}
+	suggestions        = []string{}
+	selectedColumns    = []string{}
 
 	extraWidth = defaultExtraWidth
 
@@ -51,7 +60,11 @@ var (
 		cols:  []string{},
 		flows: []config.GenericMap{},
 	}
-	selectedData = []byte{}
+	selectedData        = []byte{}
+	selectedPayloadKind = ""
+	selectedFlowIndex   = -1
+
+	suppressTableSelection bool
 )
 
 func createFlowDisplay() {
@@ -112,11 +125,8 @@ func getFlowMain() tview.Primitive {
 
 	if paused {
 		if len(selectedData) > 0 {
-			hex := hexview.NewHexView(selectedData)
-			hex.SetBorder(true).SetTitle("Payload")
-			mainView.AddItem(hex, 0, 1, focus == "hex")
+			mainView.AddItem(getPayloadPanel(), 0, 1, focus == "hex")
 		}
-		tableView.ScrollToBeginning()
 	}
 	mainView.AddItem(getBottom(), 1, 0, focus == "inputField")
 	return mainView
@@ -203,6 +213,9 @@ func getTable() *tview.Table {
 		SetBorders(false).
 		SetSelectable(true, true).
 		SetSelectionChangedFunc(func(row, _ int) {
+			if suppressTableSelection {
+				return
+			}
 			focus = "table"
 			index := row - 1
 			if row <= 0 || index >= len(tableData.flows) {
@@ -210,6 +223,20 @@ func getTable() *tview.Table {
 				return
 			}
 			selectedFlow := tableData.flows[index]
+			if idx, ok := selectedFlow["Index"].(int); ok {
+				selectedFlowIndex = idx
+			}
+			if isPlaintextRecord(selectedFlow) {
+				payload := plaintextRawBytes(selectedFlow)
+				if len(payload) == 0 {
+					if summary := plaintextBinarySummary(selectedFlow); summary != "" {
+						selectData([]byte(summary), payloadKindPlaintext)
+					}
+					return
+				}
+				selectData(payload, payloadKindPlaintext)
+				return
+			}
 			data, ok := selectedFlow["Data"]
 			if ok {
 				bytes, err := base64.StdEncoding.DecodeString(data.(string))
@@ -217,7 +244,7 @@ func getTable() *tview.Table {
 					log.Error("Error while decoding data", err)
 					return
 				}
-				selectData(bytes)
+				selectData(bytes, payloadKindWire)
 			}
 		}).
 		SetSelectedFunc(func(row, col int) {
@@ -338,9 +365,13 @@ func getBottom() tview.Primitive {
 func getColumnsModal() tview.Primitive {
 	availableColumns := []*ColumnConfig{}
 	for _, col := range cfg.Columns {
-		if col.Field != "" {
-			availableColumns = append(availableColumns, col)
+		if col.Field == "" {
+			continue
 		}
+		if col.Feature == plaintextCaptureFeature && (capture != Packet || !plaintextCaptureEnabled()) {
+			continue
+		}
+		availableColumns = append(availableColumns, col)
 	}
 
 	content := tview.NewFlex().SetDirection(tview.FlexRow)
@@ -454,23 +485,208 @@ func getFlowShowCountText() string {
 	return fmt.Sprintf("Showing last: %d\n", showCount)
 }
 
-func AppendFlow(genericMap config.GenericMap) {
-	if paused {
+func getPayloadPanel() tview.Primitive {
+	if selectedPayloadKind == payloadKindPlaintext {
+		formatted := formatPlaintextPayload(selectedData)
+		if formatted != "" {
+			text := tview.NewTextView().
+				SetDynamicColors(false).
+				SetScrollable(true).
+				SetWrap(true).
+				SetText(formatted)
+			text.SetBorder(true).SetTitle(hexPanelTitle())
+			return text
+		}
+		if len(selectedData) > 0 {
+			hex := hexview.NewHexView(selectedData)
+			hex.SetBorder(true).SetTitle(fmt.Sprintf("TLS Plaintext (binary, %dB)", len(selectedData)))
+			return hex
+		}
+		text := tview.NewTextView().
+			SetDynamicColors(false).
+			SetText("(empty TLS plaintext payload)")
+		text.SetBorder(true).SetTitle(hexPanelTitle())
+		return text
+	}
+	if formatted := formatWireHTTPPayload(selectedData); formatted != "" {
+		text := tview.NewTextView().
+			SetDynamicColors(false).
+			SetScrollable(true).
+			SetWrap(true).
+			SetText(formatted)
+		text.SetBorder(true).SetTitle(wirePayloadPanelTitle(selectedData))
+		return text
+	}
+	hex := hexview.NewHexView(selectedData)
+	hex.SetBorder(true).SetTitle(wirePayloadPanelTitle(selectedData))
+	return hex
+}
+
+func hexPanelTitle() string {
+	if capture != Packet {
+		return "Payload"
+	}
+	switch selectedPayloadKind {
+	case payloadKindPlaintext:
+		return "TLS Plaintext"
+	case payloadKindWire:
+		return wirePayloadPanelTitle(selectedData)
+	default:
+		return "Payload"
+	}
+}
+
+func packetFlowTimeMs(m config.GenericMap) float64 {
+	if t := toFloat64(m, "TimeFlowStartMs"); t > 0 {
+		return t
+	}
+	return toFloat64(m, "Time") * 1000
+}
+
+func packetFlowIndex(m config.GenericMap) int {
+	idx, _ := m["Index"].(int)
+	return idx
+}
+
+func comparePacketFlows(a, b config.GenericMap) bool {
+	ti := packetFlowTimeMs(a)
+	tj := packetFlowTimeMs(b)
+	if ti != tj {
+		return ti < tj
+	}
+	return packetFlowIndex(a) < packetFlowIndex(b)
+}
+
+func sortPacketFlows(flows []config.GenericMap) {
+	sort.Slice(flows, func(i, j int) bool {
+		return comparePacketFlows(flows[i], flows[j])
+	})
+}
+
+func isWirePacketRecord(m config.GenericMap) bool {
+	_, ok := m["Data"]
+	return ok
+}
+
+func trimFlowsToShowCount(flows []config.GenericMap, limit int) []config.GenericMap {
+	if limit <= 0 {
+		return nil
+	}
+	if len(flows) <= limit {
+		return flows
+	}
+	if capture == Packet {
+		sortPacketFlows(flows)
+	}
+	return flows[len(flows)-limit:]
+}
+
+func plaintextCaptureColumnIDs() []string {
+	ids := []string{}
+	for _, col := range cfg.Columns {
+		if col.Feature == plaintextCaptureFeature && col.Field != "" {
+			ids = append(ids, col.ID)
+		}
+	}
+	return ids
+}
+
+func appendPlaintextColumns(cols []string) []string {
+	if capture != Packet || !plaintextCaptureEnabled() {
+		return cols
+	}
+	if len(selectedColumns) > 0 {
+		return cols
+	}
+	for _, id := range append([]string{"RecordType"}, plaintextCaptureColumnIDs()...) {
+		if !slices.Contains(cols, id) {
+			cols = append(cols, id)
+		}
+	}
+	return cols
+}
+
+func restoreTableSelection() {
+	if tableView == nil || selectedFlowIndex < 0 {
 		return
 	}
+	for i, f := range tableData.flows {
+		if idx, ok := f["Index"].(int); ok && idx == selectedFlowIndex {
+			suppressTableSelection = true
+			tableView.Select(i+1, 0)
+			suppressTableSelection = false
+			return
+		}
+	}
+}
 
-	// lock since we are updating lastFlows concurrently
+func appendToTimeSortedBuffer(buf *[]config.GenericMap, m config.GenericMap, maxLen int) {
+	*buf = append(*buf, m)
+	sort.Slice(*buf, func(i, j int) bool {
+		if capture == Flow {
+			return toFloat64((*buf)[i], "TimeFlowEndMs") < toFloat64((*buf)[j], "TimeFlowEndMs")
+		}
+		if capture == Packet {
+			return comparePacketFlows((*buf)[i], (*buf)[j])
+		}
+		return toFloat64((*buf)[i], "Time") < toFloat64((*buf)[j], "Time")
+	})
+	if len(*buf) > maxLen {
+		*buf = (*buf)[len(*buf)-maxLen:]
+	}
+}
+
+func clearPacketCaptureBuffers() {
+	lastWirePackets = nil
+	lastPlaintextFlows = nil
+}
+
+func packetCaptureFlowSnapshot() []config.GenericMap {
+	if capture == Packet && plaintextCaptureEnabled() {
+		merged := make([]config.GenericMap, 0, len(lastWirePackets)+len(lastPlaintextFlows))
+		merged = append(merged, lastWirePackets...)
+		merged = append(merged, lastPlaintextFlows...)
+		sortPacketFlows(merged)
+		return merged
+	}
+	snapshot := make([]config.GenericMap, len(lastFlows))
+	copy(snapshot, lastFlows)
+	return snapshot
+}
+
+func AppendFlow(genericMap config.GenericMap) {
 	mutex.Lock()
+	if paused {
+		mutex.Unlock()
+		return
+	}
 
 	// add new flow to the array
 	genericMap["Index"] = flowIndex
 	flowIndex++
+
+	if capture == Packet && plaintextCaptureEnabled() {
+		switch {
+		case isPlaintextRecord(genericMap):
+			appendToTimeSortedBuffer(&lastPlaintextFlows, genericMap, defaultPlaintextKeepCount)
+		case isWirePacketRecord(genericMap):
+			appendToTimeSortedBuffer(&lastWirePackets, genericMap, defaultWirePacketKeepCount)
+		default:
+			appendToTimeSortedBuffer(&lastFlows, genericMap, keepCount)
+		}
+		mutex.Unlock()
+		return
+	}
+
 	lastFlows = append(lastFlows, genericMap)
 
 	// sort flows according to time
 	sort.Slice(lastFlows, func(i, j int) bool {
 		if capture == Flow {
 			return toFloat64(lastFlows[i], "TimeFlowEndMs") < toFloat64(lastFlows[j], "TimeFlowEndMs")
+		}
+		if capture == Packet {
+			return comparePacketFlows(lastFlows[i], lastFlows[j])
 		}
 		return toFloat64(lastFlows[i], "Time") < toFloat64(lastFlows[j], "Time")
 	})
@@ -540,27 +756,29 @@ func getCols() []string {
 			)
 		}
 	}
-	return cols
+	return appendPlaintextColumns(cols)
 }
 
 func getFlows() []config.GenericMap {
-	// lastFlows may change during the render so we make a copy first
-	lfCopy := make([]config.GenericMap, len(lastFlows))
-	copy(lfCopy, lastFlows)
+	mutex.Lock()
+	lfCopy := packetCaptureFlowSnapshot()
+	mutex.Unlock()
 
-	// keep already displayed flows that may been removed in lastFlows
-	indexes := []int{}
-	for _, lf := range lfCopy {
-		indexes = append(indexes, lf["Index"].(int))
-	}
-	missingFlows := []config.GenericMap{}
-	for _, flow := range tableData.flows {
-		if !slices.Contains(indexes, flow["Index"].(int)) {
-			missingFlows = append(missingFlows, flow)
+	// Flow capture only: keep a selected row visible briefly after it leaves the buffer.
+	// Packet capture evicts purely by time so the table tracks live traffic.
+	if capture != Packet {
+		indexes := []int{}
+		for _, lf := range lfCopy {
+			indexes = append(indexes, lf["Index"].(int))
 		}
+		missingFlows := []config.GenericMap{}
+		for _, flow := range tableData.flows {
+			if !slices.Contains(indexes, flow["Index"].(int)) {
+				missingFlows = append(missingFlows, flow)
+			}
+		}
+		lfCopy = append(missingFlows, lfCopy...)
 	}
-	// prepend missing flows to keep the order
-	lfCopy = append(missingFlows, lfCopy...)
 
 	// apply regexes to filter flows
 	flows := []config.GenericMap{}
@@ -586,10 +804,7 @@ func getFlows() []config.GenericMap {
 		flows = lfCopy
 	}
 
-	// limit filtered flows to display size
-	if len(flows) > showCount {
-		flows = flows[len(flows)-showCount:]
-	}
+	flows = trimFlowsToShowCount(flows, showCount)
 	return flows
 }
 
@@ -629,15 +844,19 @@ func updateTableAndSuggestions() {
 			}
 		}
 	}
+	restoreTableSelection()
 }
 
-func selectData(data []byte) {
+func selectData(data []byte, kind string) {
 	selectedData = data
+	selectedPayloadKind = kind
 	pause(true)
 }
 
 func resetSelection() {
 	selectedData = []byte{}
+	selectedPayloadKind = ""
+	selectedFlowIndex = -1
 	pause(false)
 }
 
@@ -673,8 +892,12 @@ func (d *TableData) GetCell(row, col int) *tview.TableCell {
 	}
 	index := row - 1
 	if index < len(d.flows) {
+		cellColor := color
+		if isPlaintextRecord(d.flows[index]) {
+			cellColor = tcell.ColorLightGreen
+		}
 		return tview.NewTableCell(toColValue(d.flows[index], id, toColWidth(id))).
-			SetTextColor(color).
+			SetTextColor(cellColor).
 			SetBackgroundColor(bgColor).
 			SetAlign(tview.AlignLeft).
 			SetMaxWidth(width)

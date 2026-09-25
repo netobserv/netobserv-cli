@@ -4,15 +4,12 @@ import (
 	"bufio"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
 	"github.com/gopacket/gopacket/pcapgo"
 	"github.com/jpillora/sizestr"
@@ -44,6 +41,7 @@ func init() {
 func runPacketCapture(_ *cobra.Command, _ []string) {
 	capture = Packet
 	showCount = defaultFlowShowCount
+	keepCount = defaultKeepCount
 	clearPacketCaptureBuffers()
 	if isBackground {
 		go backgroundHearbeat()
@@ -94,6 +92,17 @@ func startPacketCollector() {
 	setActivePacketWriter(ngw, f)
 	defer clearActivePacketWriter()
 
+	var wireBuf *wirePacketBuffer
+	if plaintextCaptureEnabled() {
+		wireBuf = newWirePacketBuffer(ngw, plaintextCorrelationWindow, func(m config.GenericMap) {
+			enrichPlaintextForExport(&m)
+			if plaintextLog != nil {
+				writePlaintextJSONL(plaintextLog, &m)
+			}
+		}, parseCaptureFilters())
+		defer wireBuf.Close()
+	}
+
 	if tlsKeylogPath != "" {
 		if err := embedTLSKeylog(ngw, tlsKeylogPath); err != nil {
 			log.Warnf("TLS keylog embed failed: %v", err)
@@ -128,49 +137,75 @@ func startPacketCollector() {
 		}
 
 		if isPlaintextRecord(genericMap) {
-			assignPlaintextPacketID(&genericMap)
-			enrichPlaintextForExport(&genericMap)
-			genericMap["PcapAnnotated"] = false
-			if plaintextLog != nil {
-				writePlaintextJSONL(plaintextLog, &genericMap)
-			}
+			handlePlaintextRecord(genericMap, wireBuf, plaintextLog)
 			continue
 		}
 
-		data, ok := genericMap["Data"]
-		if ok {
-			go AppendFlow(genericMap.Copy())
-			writePacketData(ngw, &genericMap, &data)
-		} else {
-			go AppendFlow(genericMap)
-		}
+		handleWirePacket(ngw, genericMap, wireBuf)
 
 		totalBytes += int64(len(fp.GenericMap.Value))
-		if totalBytes > maxBytes {
-			if exit := onLimitReached(); exit {
-				log.Infof("Capture reached %s, exiting now...", sizestr.ToString(maxBytes))
-				return
-			}
-		}
-
-		now := currentTime()
-		if int(now.Sub(startupTime)) > int(maxTime) {
-			if exit := onLimitReached(); exit {
-				log.Infof("Capture reached %s, exiting now...", maxTime)
-				return
-			}
+		if captureLimitReached() {
+			return
 		}
 
 		captureStarted = true
 	}
 }
 
-func plaintextCaptureEnabled() bool {
-	return optionEnabled("enable_openssl")
+func handlePlaintextRecord(genericMap config.GenericMap, wireBuf *wirePacketBuffer, plaintextLog io.Writer) {
+	id := assignPlaintextPacketID(&genericMap)
+	enrichPlaintextForExport(&genericMap)
+	go AppendFlow(genericMap.Copy())
+	if wireBuf != nil {
+		wireBuf.HandlePlaintext(genericMap, id)
+		return
+	}
+	genericMap["PcapAnnotated"] = false
+	if plaintextLog != nil {
+		writePlaintextJSONL(plaintextLog, &genericMap)
+	}
 }
 
-// clearPacketCaptureBuffers is a no-op until wire/TUI correlation lands (NETOBSERV-2859).
-func clearPacketCaptureBuffers() {}
+func handleWirePacket(ngw *pcapgo.NgWriter, genericMap config.GenericMap, wireBuf *wirePacketBuffer) {
+	data, ok := genericMap["Data"]
+	if !ok {
+		go AppendFlow(genericMap)
+		return
+	}
+	go AppendFlow(genericMap.Copy())
+	if wireBuf != nil {
+		if err := wireBuf.Enqueue(genericMap, data.(string)); err != nil {
+			log.Error("failed to buffer wire packet", err)
+		}
+		return
+	}
+	writePacketData(ngw, &genericMap, &data)
+}
+
+// captureLimitReached reports (and logs) whether the byte or time budget is exhausted.
+func captureLimitReached() bool {
+	if totalBytes > maxBytes {
+		if exit := onLimitReached(); exit {
+			log.Infof("Capture reached %s, exiting now...", sizestr.ToString(maxBytes))
+			return true
+		}
+	}
+	now := currentTime()
+	if int(now.Sub(startupTime)) > int(maxTime) {
+		if exit := onLimitReached(); exit {
+			log.Infof("Capture reached %s, exiting now...", maxTime)
+			return true
+		}
+	}
+	return false
+}
+
+func plaintextCaptureEnabled() bool {
+	// Only OpenSSL uprobes are implemented on the eBPF agent side today.
+	// GoTLS/kTLS tracking is not wired yet, so their flags do not enable
+	// plaintext capture (and wire correlation) in the CLI.
+	return optionEnabled("enable_openssl")
+}
 
 func isPlaintextRecord(m config.GenericMap) bool {
 	rt, ok := m["RecordType"].(string)
@@ -189,58 +224,14 @@ func writePlaintextJSONL(w io.Writer, m *config.GenericMap) {
 }
 
 func writePacketData(ngw *pcapgo.NgWriter, genericMap *config.GenericMap, data *interface{}) {
-	ts := time.Unix(int64((*genericMap)["Time"].(float64)), 0)
-
 	b, err := base64.StdEncoding.DecodeString((*data).(string))
 	if err != nil {
 		log.Error("Error while decoding data", err)
 		return
 	}
-	keys := make([]string, 0, len((*genericMap)))
-	for k := range *genericMap {
-		if k == "Time" || k == "Data" {
-			continue
-		}
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	srcComment.WriteString("Source\n")
-	dstComment.WriteString("Destination\n")
-	commonComment.WriteString("Common\n")
-	for _, k := range keys {
-		id := toColID(k)
-		str := fmt.Sprintf("%s: %v\n", toColName(id, 0), toColValue((*genericMap), id, 0))
-		if strings.HasPrefix(k, "Src") {
-			srcComment.WriteString(str)
-		} else if strings.HasPrefix(k, "Dst") {
-			dstComment.WriteString(str)
-		} else {
-			commonComment.WriteString(str)
-		}
-	}
-
-	ngwMu.Lock()
-	err = ngw.WritePacketWithOptions(gopacket.CaptureInfo{
-		Timestamp:     ts,
-		Length:        len(b),
-		CaptureLength: len(b),
-	}, b, pcapgo.NgPacketOptions{
-		Comments: []string{
-			srcComment.String(),
-			dstComment.String(),
-			commonComment.String(),
-		},
-	})
-	ngwMu.Unlock()
-	if err != nil {
+	if err := writePacketDataWithOptions(ngw, genericMap, b, nil, nil); err != nil {
 		log.Error("Error while writing packet", err)
-		return
 	}
-
-	srcComment.Reset()
-	dstComment.Reset()
-	commonComment.Reset()
 }
 
 // ngwMu serializes all NgWriter writes (packets and TLS keylog DSB blocks) and

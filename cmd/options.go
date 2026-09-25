@@ -15,15 +15,16 @@ var (
 	noOptions  = "None"
 
 	// displays
-	rawDisplay           = "Raw"
-	standardDisplay      = "Standard"
-	pktDropFeature       = "pktDrop"
-	dnsFeature           = "dnsTracking"
-	rttFeature           = "flowRTT"
-	networkEventsDisplay = "networkEvents"
-	pktTranslation       = "packetTranslation"
-	udnMapping           = "udnMapping"
-	ipSec                = "ipsec"
+	rawDisplay              = "Raw"
+	standardDisplay         = "Standard"
+	pktDropFeature          = "pktDrop"
+	dnsFeature              = "dnsTracking"
+	rttFeature              = "flowRTT"
+	networkEventsDisplay    = "networkEvents"
+	pktTranslation          = "packetTranslation"
+	udnMapping              = "udnMapping"
+	ipSec                   = "ipsec"
+	plaintextCaptureFeature = "plaintextCapture"
 
 	defaultDisplayIndex = 1
 	defaultPanelsIndex  = 0

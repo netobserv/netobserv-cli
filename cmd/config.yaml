@@ -604,6 +604,20 @@ columns:
     default: true
     width: 15
     feature: networkEvents
+  - id: Direction
+    name: Plaintext Dir
+    tooltip: Ingress or egress relative to the captured process
+    field: Direction
+    default: false
+    width: 10
+    feature: plaintextCapture
+  - id: PlaintextPreview
+    name: Plaintext Preview
+    tooltip: Decrypted TLS application data preview
+    field: PlaintextPreview
+    default: false
+    width: 120
+    feature: plaintextCapture
   - id: XlatZoneId
     group: Xlat
     name: Xlat zone id

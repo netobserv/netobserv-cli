@@ -562,6 +562,26 @@ func toColValue(genericMap config.GenericMap, id string, width int) string {
 	case "NetworkEvents":
 		events := networkevents.MapToStrings(genericMap)
 		outputStr = strings.Join(events, ", ")
+	case "RecordType":
+		if isPlaintextRecord(genericMap) {
+			outputStr = toValue(genericMap, "TLSSource")
+			if outputStr == "" {
+				outputStr = toValue(genericMap, "RecordType")
+			}
+		} else {
+			outputStr = toValue(genericMap, fieldName)
+			if outputStr == "" {
+				outputStr = toValue(genericMap, "RecordType")
+			}
+		}
+	case "Direction":
+		outputStr = toValue(genericMap, "Direction")
+	case "PlaintextPreview":
+		if isPlaintextRecord(genericMap) {
+			outputStr = plaintextTablePreview(genericMap, width)
+		} else {
+			outputStr = toValue(genericMap, "PlaintextPreview")
+		}
 	default:
 		// else simply pick field value as text from column name
 		outputStr = toValue(genericMap, fieldName)

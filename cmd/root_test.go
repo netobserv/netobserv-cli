@@ -116,6 +116,8 @@ func setup(t *testing.T) {
 	clearPacketCaptureBuffers()
 	showCount = defaultFlowShowCount
 	selectedData = []byte{}
+	selectedPayloadKind = ""
+	selectedFlowIndex = -1
 	paused = false
 
 	// clear previous table content
