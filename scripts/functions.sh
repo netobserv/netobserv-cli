@@ -420,6 +420,12 @@ function setup() {
     getNodesByLabel "$nodeSelector"
   fi
 
+  # On OpenShift, add node-selector annotation to override any defaultNodeSelector
+  # configured on the Scheduler CR (NETOBSERV-2845)
+  if [[ "$isOCP" == "true" ]]; then
+    namespaceYAML=$(echo "$namespaceYAML" | "$YQ_BIN" e '.metadata.annotations."openshift.io/node-selector" = ""' -)
+  fi
+
   # apply yamls
   echo "creating $namespace namespace"
   applyYAML "$namespaceYAML"
