@@ -27,7 +27,7 @@ var (
 	// Commands started by StartCommand, which outlive the call. Their PTY master must stay
 	// open: once the last reference is dropped, the runtime finalizer closes the file
 	// descriptor, the kernel sends SIGHUP to the foreground process group and the command dies
-	// early -- running its EXIT trap, which tears the capture down before the test looked at it.
+	// early, before the test has inspected the capture.
 	startedCommands   []startedCommand
 	startedCommandsMu sync.Mutex
 )
@@ -50,7 +50,7 @@ func trackStarted(cmd *exec.Cmd, ptmx *os.File) {
 }
 
 // StopStartedCommands kills every command left running by StartCommand. Call it before deleting
-// the capture resources, otherwise a still-running CLI would reach its own EXIT trap later on and
+// the capture resources, otherwise a still-running CLI could finish later and
 // clean up whatever the next test has created in the meantime.
 func StopStartedCommands(log *logrus.Entry) {
 	startedCommandsMu.Lock()
@@ -61,7 +61,7 @@ func StopStartedCommands(log *logrus.Entry) {
 	for _, sc := range pending {
 		if sc.cmd.Process != nil {
 			// pty.Start gives the command its own session, so the negated PID addresses the
-			// whole process group: the CLI script and the oc processes it spawned.
+			// whole process group, including any subprocesses started by the command.
 			if err := syscall.Kill(-sc.cmd.Process.Pid, syscall.SIGKILL); err != nil {
 				log.Debugf("Could not kill process group %d: %v", sc.cmd.Process.Pid, err)
 			}
@@ -192,13 +192,8 @@ func RunCommand(log *logrus.Entry, commandName string, arg ...string) (string, e
 	log.Debug("Waiting for output goroutines to finish...")
 	wg.Wait()
 
-	// TODO: find why this returns -1. That may be related to pty implementation
-	/*if cmd.ProcessState.ExitCode() != 0 {
-		return sbErr.String() + sbOut.String(), fmt.Errorf("Cmd returned code %d", cmd.ProcessState.ExitCode())
-	}*/
-
-	// Combine stderr first (errors more visible), then stdout
-	return sbErr.String() + sbOut.String(), nil
+	// Preserve the process exit status so failed CLI commands fail the test.
+	return sbErr.String() + sbOut.String(), err
 }
 
 // run command with tty support and terminate it after timeout

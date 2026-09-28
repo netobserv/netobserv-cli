@@ -15,7 +15,7 @@ import (
 var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 var (
-	slog = logrus.WithField("component", "script_test")
+	slog = logrus.WithField("component", "command_test")
 )
 
 func TestHelpCommand(t *testing.T) {

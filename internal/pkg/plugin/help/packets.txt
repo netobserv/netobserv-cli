@@ -1,0 +1,55 @@
+
+NetObserv allows you to capture packets from your cluster.
+Find more information at: https://github.com/netobserv/network-observability-cli/
+
+Syntax: netobserv packets [options]
+
+Filters:
+  --action:                     filter action                                         (default: Accept)
+  --cidr:                       filter CIDR                                           (default: 0.0.0.0/0)
+  --direction:                  filter direction                                      (default: n/a)
+  --dport:                      filter destination port                               (default: n/a)
+  --dport_range:                filter destination port range                         (default: n/a)
+  --dports:                     filter on either of two destination ports             (default: n/a)
+  --drops:                      filter flows with only dropped packets                (default: false)
+  --icmp_code:                  filter ICMP code                                      (default: n/a)
+  --icmp_type:                  filter ICMP type                                      (default: n/a)
+  --node-selector:              capture on specific nodes                             (default: n/a)
+  --peer_ip:                    filter peer IP                                        (default: n/a)
+  --peer_cidr:                  filter peer CIDR                                      (default: n/a)
+  --port_range:                 filter port range                                     (default: n/a)
+  --port:                       filter port                                           (default: n/a)
+  --ports:                      filter on either of two ports                         (default: n/a)
+  --protocol:                   filter protocol                                       (default: n/a)
+  --query:                      filter flows using a custom query                     (default: n/a)
+  --sport_range:                filter source port range                              (default: n/a)
+  --sport:                      filter source port                                    (default: n/a)
+  --sports:                     filter on either of two source ports                  (default: n/a)
+  --tcp_flags:                  filter TCP flags                                      (default: n/a)
+
+Options:
+  --enable_openssl:             capture TLS plaintext via OpenSSL uprobes (default: false; enables privileged mode)
+  --tls_process_allowlist:      restrict TLS uprobes to named processes (csv, e.g. nginx,envoy)
+  --tls_plaintext_min_bytes:    drop plaintext events shorter than N bytes (default: 0)
+  --tls_plaintext_preview_bytes: plaintext preview length (default: 256; 0 = full payload)
+  --tls-keylog:                 snapshot a local SSLKEYLOGFILE into a capture Secret for pcapng decryption
+  --background:                 run in background                                     (default: false)
+  --copy:                       copy the output files locally                         (default: prompt)
+  --log-level:                  components logs                                       (default: info)
+  --max-time:                   maximum capture time                                  (default: 5m)
+  --max-bytes:                  maximum capture bytes                                 (default: 50000000 = 50MB)
+  --yaml:                       generate YAML without applying it                     (default: false)
+
+Examples:
+  Capture packets on port 8080:
+    netobserv packets --port=8080
+  Capture packets on specific nodes (labeled with 'netobserv=true') and port, for a maximum of 100MB:
+    netobserv packets --node-selector=netobserv:true --port=80 --max-bytes=100000000
+  Capture OpenSSL plaintext scoped to a pod and port:
+    netobserv packets --port=8443 --enable_openssl --peer_ip=<pod-ip>
+  Capture OpenSSL plaintext scoped by process:
+    netobserv packets --port=8443 --enable_openssl --tls_process_allowlist=nginx
+    # readable output: output/plaintext/<timestamp>.jsonl (PlaintextDisplay field)
+  Embed a TLS key log snapshot in pcapng:
+    netobserv packets --port=443 --tls-keylog=/path/to/keylog.txt
+    # --yaml includes the sensitive key log in a Secret; protect the generated file.

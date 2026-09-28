@@ -4,8 +4,23 @@ tmp
 cover.out
 kubeconfig
 netobserv-cli.tar.gz
+netobserv-cli-*.tar.gz
 cli-e2e-img.tar
 e2e/commands
 e2e/output
 e2e-logs
 bin/
+
+# Local OS and editor files
+.DS_Store
+._*
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Additional generated image and test output
+/out/
+/cover*.out
+/test.out

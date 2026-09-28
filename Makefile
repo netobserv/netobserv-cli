@@ -6,7 +6,8 @@
 VERSION ?= main
 
 # Go architecture and targets images to build
-GOARCH ?= amd64
+GOARCH ?= $(shell go env GOARCH)
+PLUGIN_GOOS ?= $(shell go env GOOS)
 MULTIARCH_TARGETS ?= amd64
 
 # In CI, to be replaced by `netobserv`
@@ -22,9 +23,8 @@ OUTPUT := $(DIST_DIR)/$(NAME)
 COMMANDS = flows packets cleanup
 COMMAND_ARGS ?=
 
-# Get either oc (favorite) or kubectl paths
-K8S_CLI_BIN_PATH = $(shell which oc 2>/dev/null || which kubectl)
-K8S_CLI_BIN ?= $(shell basename ${K8S_CLI_BIN_PATH})
+# Plugin filename prefix; neither external CLI is needed to build or run it.
+K8S_CLI_BIN ?= oc
 
 # Image registry such as quay or docker
 IMAGE_REGISTRY ?= quay.io
@@ -40,8 +40,8 @@ PULL_POLICY ?=Always
 AGENT_IMAGE ?= $(IMAGE_REGISTRY)/netobserv/netobserv-ebpf-agent:main
 
 # Image building tool (docker / podman) - docker is preferred in CI
-OCI_BIN_PATH := $(shell which docker 2>/dev/null || which podman)
-OCI_BIN ?= $(shell basename ${OCI_BIN_PATH})
+OCI_BIN_PATH = $(shell command -v docker 2>/dev/null || command -v podman 2>/dev/null)
+OCI_BIN ?= $(if $(OCI_BIN_PATH),$(notdir $(OCI_BIN_PATH)),podman)
 OCI_BUILD_OPTS ?=
 KREW_PLUGIN ?=false
 
@@ -57,13 +57,12 @@ ifneq ($(CLEAN_BUILD),)
 endif
 
 GOLANGCI_LINT_VERSION = v2.12.2
-BASH_VERSION = v4.2.0
 YQ_VERSION = v4.45.1
 
 # build a single arch target provided as argument
 define build_target
 	echo 'building image for arch $(1)'; \
-	DOCKER_BUILDKIT=1 $(OCI_BIN) buildx build --load --build-arg LDFLAGS="${LDFLAGS}" --build-arg TARGETARCH=$(1) ${OCI_BUILD_OPTS} ${EXTRA_BUILD_FLAGS} -t ${IMAGE}-$(1) -f Dockerfile .;
+	DOCKER_BUILDKIT=1 $(OCI_BIN) buildx build --load --build-arg LDFLAGS="${LDFLAGS}" --build-arg TARGETARCH=$(1) --build-arg VERSION="$(VERSION)" --build-arg COLLECTOR_IMAGE="$(IMAGE)" --build-arg AGENT_IMAGE="$(AGENT_IMAGE)" --build-arg PULL_POLICY="$(PULL_POLICY)" ${OCI_BUILD_OPTS} ${EXTRA_BUILD_FLAGS} -t ${IMAGE}-$(1) -f Dockerfile .;
 endef
 
 # push a single arch target image
@@ -119,13 +118,13 @@ tests-e2e: oc-commands ## Run e2e tests using kind cluster
 	@rm -rf e2e/output
 	@rm -f cli-e2e-img.tar
 	go clean -testcache
-	$(OCI_BIN) build . -t ${IMAGE}
+	$(OCI_BIN) build --build-arg TARGETARCH=$(GOARCH) --build-arg VERSION="$(VERSION)" --build-arg COLLECTOR_IMAGE="$(IMAGE)" --build-arg AGENT_IMAGE="$(AGENT_IMAGE)" --build-arg PULL_POLICY="$(PULL_POLICY)" . -t ${IMAGE}
 	$(OCI_BIN) save -o cli-e2e-img.tar ${IMAGE}
 	GOOS=$(GOOS) go test -p 1 -timeout 30m -v -mod vendor -tags e2e ./e2e/...
 
 .PHONY: tests-int
-tests-int: ## Run e2e integration tests. You need a running cluster connected
-	GOOS= go test -p 1 -timeout 30m -v -mod vendor ./e2e/integration-tests/...
+tests-int: oc-commands ## Build the Go plugin and run integration tests against KUBECONFIG
+	PATH="$(abspath $(DIST_DIR)):$$PATH" GOOS= go test -p 1 -timeout 30m -v -mod vendor ./e2e/integration-tests/...
 
 .PHONY: coverage-report
 coverage-report: ## Generate coverage report
@@ -159,18 +158,12 @@ clean: ## Clean up build directory
 	@rm -rf $(FILES_OUTPUT_DIR)
 
 .PHONY: commands
-commands: ## Generate either oc or kubectl plugins and add them to build folder
-	@echo "### Generating $(K8S_CLI_BIN) commands"
-	DIST_DIR=$(DIST_DIR) \
-	K8S_CLI_BIN=$(K8S_CLI_BIN) \
-	IMAGE=$(IMAGE) \
-	PULL_POLICY=$(PULL_POLICY) \
-	AGENT_IMAGE=$(AGENT_IMAGE) \
-	VERSION=$(VERSION) \
-	REQUIRED_BASH_VERSION=$(BASH_VERSION) \
-	REQUIRED_YQ_VERSION=$(YQ_VERSION) \
-	SUPPORTED_ARCHS=$(MULTIARCH_TARGETS) \
-	./scripts/inject.sh
+commands: ## Build the standalone Go plugin (also usable through oc/kubectl)
+	@mkdir -p $(DIST_DIR)
+	CGO_ENABLED=0 GOOS=$(PLUGIN_GOOS) GOARCH=$(GOARCH) go build -mod=vendor \
+		-ldflags "-X main.version=$(VERSION) -X github.com/netobserv/network-observability-cli/internal/pkg/plugin.CollectorImage=$(IMAGE) -X github.com/netobserv/network-observability-cli/internal/pkg/plugin.AgentImage=$(AGENT_IMAGE) -X github.com/netobserv/network-observability-cli/internal/pkg/plugin.PullPolicy=$(PULL_POLICY)" \
+		-o $(DIST_DIR)/$(if $(filter true,$(KREW_PLUGIN)),,$(K8S_CLI_BIN)-)netobserv.tmp ./cmd/oc-netobserv
+	mv $(DIST_DIR)/$(if $(filter true,$(KREW_PLUGIN)),,$(K8S_CLI_BIN)-)netobserv.tmp $(DIST_DIR)/$(if $(filter true,$(KREW_PLUGIN)),,$(K8S_CLI_BIN)-)netobserv
 
 .PHONY: kubectl-commands
 kubectl-commands: K8S_CLI_BIN=kubectl
@@ -186,16 +179,21 @@ install-commands: commands ## Generate plugins and add them to /usr/bin/
 
 .PHONY: docs
 docs: oc-commands ## Generate asciidoc
-	./scripts/generate-doc.sh
+	CLI_BIN="./$(DIST_DIR)/oc-netobserv" ./scripts/generate-doc.sh
 
 .PHONY: update-config
 update-config: ## Update config from operator repo
 	./scripts/update-config.sh
 
 .PHONY: release
-release: clean ## Generate tar.gz containing krew plugin
+release: ## Build an OS/architecture-specific Krew archive
 	$(MAKE) KREW_PLUGIN=true kubectl-commands
-	tar -czf netobserv-cli.tar.gz LICENSE ./build/netobserv
+	tar -czf netobserv-cli-$(PLUGIN_GOOS)-$(GOARCH).tar.gz LICENSE ./build/netobserv
+
+.PHONY: release-all
+release-all: ## Build supported Linux and macOS plugin archives
+	@for arch in amd64 arm64 ppc64le s390x; do $(MAKE) release PLUGIN_GOOS=linux GOARCH=$$arch || exit $$?; done
+	@for arch in amd64 arm64; do $(MAKE) release PLUGIN_GOOS=darwin GOARCH=$$arch || exit $$?; done
 
 .PHONY: create-kind-cluster
 create-kind-cluster: prereqs ## Create a kind cluster
@@ -203,9 +201,9 @@ create-kind-cluster: prereqs ## Create a kind cluster
 
 .PHONY: destroy-kind-cluster
 destroy-kind-cluster: KUBECONFIG=./kubeconfig
-destroy-kind-cluster: ## Destroy the kind cluster.
+destroy-kind-cluster: oc-commands ## Destroy the kind cluster.
 	test -s ./kubeconfig || { echo "kubeconfig does not exist! Exiting..."; exit 1; }
-	$(K8S_CLI_BIN) delete -f ./res/namespace.yml --ignore-not-found
+	./$(DIST_DIR)/oc-netobserv cleanup --kubeconfig="$(KUBECONFIG)"
 	kind delete cluster --name netobserv-cli-cluster
 	rm ./kubeconfig
 

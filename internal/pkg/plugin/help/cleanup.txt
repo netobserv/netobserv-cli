@@ -1,0 +1,7 @@
+
+NetObserv may require manual cleanup in some cases such as after a background run or in case of failure.
+Use the cleanup command to remove all the netobserv CLI components.
+Find more information at: https://github.com/netobserv/network-observability-cli/
+
+Syntax: netobserv cleanup
+

@@ -1,0 +1,263 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: netobserv-cli
+  namespace: "netobserv-cli"
+  labels:
+    app: netobserv-cli
+spec:
+  selector:
+    matchLabels:
+      app: netobserv-cli
+  template:
+    metadata:
+      labels:
+        app: netobserv-cli
+    spec:
+      serviceAccountName: netobserv-cli
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: netobserv-cli
+          image: "quay.io/netobserv/netobserv-ebpf-agent:main"
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              add:
+                - "BPF"
+                - "PERFMON"
+                - "NET_ADMIN"
+              drop:
+                - ALL
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsUser: 0
+          env:
+            - name: METRICS_ENABLE
+              value: "false"
+            - name: LOG_LEVEL
+              value: info
+            - name: INTERFACES
+              value: ""
+            - name: EXCLUDE_INTERFACES
+              value: "lo"
+            - name: SAMPLING
+              value: "1"
+            - name: ENABLE_RTT
+              value: "false"
+            - name: ENABLE_PKT_DROPS
+              value: "false"
+            - name: ENABLE_DNS_TRACKING
+              value: "false"
+            - name: ENABLE_NETWORK_EVENTS_MONITORING
+              value: "false"
+            - name: ENABLE_UDN_MAPPING
+              value: "false"
+            - name: ENABLE_PKT_TRANSLATION
+              value: "false"
+            - name: FLOW_FILTER_RULES
+              value: >-
+                []
+            - name: TC_ATTACH_MODE
+              value: "any"
+            - name: EXPORT
+              value: "direct-flp"
+            - name: FLP_CONFIG
+              value: |-
+                {
+                  "log-level": "trace",
+                  "metricsSettings": {
+                    "port": 9401,
+                    "prefix": "on_demand_netobserv_",
+                    "noPanic": true
+                  },
+                  "parameters": [
+                    {
+                      "name": "enrich",
+                      "transform": {
+                        "type": "network",
+                        "network": {
+                          "rules": [
+                            {
+                              "type": "add_kubernetes",
+                              "kubernetes": {
+                                "add_zone": true,
+                                "ipField": "SrcAddr",
+                                "output": "SrcK8S"
+                              }
+                            },
+                            {
+                              "type": "add_kubernetes",
+                              "kubernetes": {
+                                "add_zone": true,
+                                "ipField": "DstAddr",
+                                "output": "DstK8S"
+                              }
+                            },
+                            {
+                              "type": "reinterpret_direction"
+                            },
+                            {
+                              "type": "add_kubernetes_infra",
+                              "kubernetes_infra": {
+                                "namespaceNameFields": [
+                                  {
+                                    "name": "SrcK8S_Name",
+                                    "namespace": "SrcK8S_Namespace"
+                                  },
+                                  {
+                                    "name": "DstK8S_Name",
+                                    "namespace": "DstK8S_Namespace"
+                                  }
+                                ],
+                                "output": "K8S_FlowLayer",
+                                "infra_prefixes": [
+                                  "netobserv",
+                                  "openshift"
+                                ],
+                                "infra_refs": [
+                                  {
+                                    "name": "kubernetes",
+                                    "namespace": "default"
+                                  },
+                                  {
+                                    "name": "openshift",
+                                    "namespace": "default"
+                                  }
+                                ]
+                              }
+                            }
+                          ],
+                          "directionInfo": {
+                            "reporterIPField": "AgentIP",
+                            "srcHostField": "SrcK8S_HostIP",
+                            "dstHostField": "DstK8S_HostIP",
+                            "flowDirectionField": "FlowDirection"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "name": "prometheus",
+                      "encode": {
+                        "type": "prom",
+                        "prom": {
+                          "metrics": [
+                            {
+                              "name": "node_egress_bytes_total",
+                              "type": "counter",
+                              "filters": [
+                                {
+                                  "key": "FlowDirection",
+                                  "value": "1|2",
+                                  "type": "match_regex"
+                                }
+                              ],
+                              "valueKey": "Bytes",
+                              "labels": [
+                                "SrcK8S_HostName",
+                                "DstK8S_HostName"
+                              ]
+                            },
+                            {
+                              "name": "node_ingress_bytes_total",
+                              "type": "counter",
+                              "filters": [
+                                {
+                                  "key": "FlowDirection",
+                                  "value": "0|2",
+                                  "type": "match_regex"
+                                }
+                              ],
+                              "valueKey": "Bytes",
+                              "labels": [
+                                "SrcK8S_HostName",
+                                "DstK8S_HostName"
+                              ]
+                            },
+                            {
+                              "name": "namespace_flows_total",
+                              "type": "counter",
+                              "filters": [],
+                              "valueKey": "",
+                              "labels": [
+                                "SrcK8S_Namespace",
+                                "DstK8S_Namespace",
+                                "K8S_FlowLayer",
+                                "SrcSubnetLabel",
+                                "DstSubnetLabel"
+                              ]
+                            },
+                            {
+                              "name": "workload_ingress_bytes_total",
+                              "type": "counter",
+                              "filters": [
+                                {
+                                  "key": "FlowDirection",
+                                  "value": "0|2",
+                                  "type": "match_regex"
+                                }
+                              ],
+                              "valueKey": "Bytes",
+                              "labels": [
+                                "SrcK8S_Namespace",
+                                "DstK8S_Namespace",
+                                "K8S_FlowLayer",
+                                "SrcSubnetLabel",
+                                "DstSubnetLabel",
+                                "SrcK8S_OwnerName",
+                                "DstK8S_OwnerName",
+                                "SrcK8S_OwnerType",
+                                "DstK8S_OwnerType",
+                                "SrcK8S_Type",
+                                "DstK8S_Type"
+                              ]
+                            }
+                          ],
+                          "prefix": "on_demand_netobserv_",
+                          "expiryTime": "0s"
+                        }
+                      }
+                    }
+                  ],
+                  "pipeline": [
+                    {
+                      "name": "enrich",
+                      "follows": "preset-ingester"
+                    },
+                    {
+                      "name": "prometheus",
+                      "follows": "enrich"
+                    }
+                  ]
+                }
+          ports:
+            - name: prometheus
+              containerPort: 9401
+              protocol: TCP
+          volumeMounts:
+            - name: bpf-kernel-debug
+              mountPath: /sys/kernel/debug
+              mountPropagation: HostToContainer
+            - name: var-run-ovn
+              mountPath: /var/run/ovn
+              mountPropagation: HostToContainer
+            - name: var-run-ovs
+              mountPath: /var/run/openvswitch
+              mountPropagation: HostToContainer
+      volumes:
+        - name: bpf-kernel-debug
+          hostPath:
+            path: /sys/kernel/debug
+            type: Directory
+        - name: var-run-ovn
+          hostPath:
+            path: /var/run/ovn-ic
+            type: DirectoryOrCreate
+        - name: var-run-ovs
+          hostPath:
+            path: /var/run/openvswitch
+            type: DirectoryOrCreate

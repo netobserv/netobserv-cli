@@ -3,9 +3,14 @@ package cluster
 import (
 	"context"
 	"fmt"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	"os"
 	"path"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,31 +97,52 @@ func (k *Kind) exportLogs() env.Func {
 		out := exe.Run("kind export logs " + logsDir + " --name " + k.clusterName)
 		klog.WithField("out", out).Info("exported cluster logs")
 
-		// move output files to cluster logs folder
-		err := os.Rename(path.Join(k.baseDir, "e2e", "tmp"), path.Join(logsDir, "output"))
-		if err != nil {
-			klog.Error(err)
-		}
-
 		return ctx, nil
 	}
 }
 
-func (k *Kind) GetAgentLogs() string {
-	exe := gexe.New()
-	contextOut := exe.Run("kubectl cluster-info --context " + k.clusterName)
-	logsOut := exe.Run("kubectl logs -l app=netobserv-cli -n netobserv-cli --tail -1")
-
-	return fmt.Sprintf("Set context: %s\n\nLogs: %s", contextOut, logsOut)
+func (k *Kind) captureClient() (*kubernetes.Clientset, error) {
+	client, err := k.testEnv.EnvConf().NewClient()
+	if err != nil {
+		return nil, err
+	}
+	return kubernetes.NewForConfig(client.RESTConfig())
 }
 
-// delete netobserv-cli namespace
+func (k *Kind) GetAgentLogs() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	client, err := k.captureClient()
+	if err != nil {
+		return err.Error()
+	}
+	pods, err := client.CoreV1().Pods("netobserv-cli").List(ctx, metav1.ListOptions{LabelSelector: "app=netobserv-cli"})
+	if err != nil {
+		return err.Error()
+	}
+	var logs strings.Builder
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		data, err := client.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: "netobserv-cli"}).DoRaw(ctx)
+		fmt.Fprintf(&logs, "%s:\n%s\n", pod.Name, data)
+		if err != nil {
+			fmt.Fprintln(&logs, err)
+		}
+	}
+	return logs.String()
+}
+
 func (k *Kind) deleteNamespace() env.Func {
 	return func(ctx context.Context, _ *envconf.Config) (context.Context, error) {
-		exe := gexe.New()
-		out := exe.Run("kubectl delete namespace netobserv-cli")
-		klog.WithField("out", out).Info("deleted namespace")
-		return ctx, nil
+		client, err := k.captureClient()
+		if err != nil {
+			return ctx, err
+		}
+		err = client.CoreV1().Namespaces().Delete(ctx, "netobserv-cli", metav1.DeleteOptions{})
+		if apierrors.IsNotFound(err) {
+			err = nil
+		}
+		return ctx, err
 	}
 }
 
