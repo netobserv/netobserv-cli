@@ -181,8 +181,10 @@ oc-commands: K8S_CLI_BIN=oc
 oc-commands: commands ## Generate oc plugins and add them to build folder
 
 .PHONY: install-commands
-install-commands: commands ## Generate plugins and add them to /usr/bin/
-	sudo cp -a ./build/. /usr/bin/
+install-commands: commands
+	sudo install -m 0755 \
+		./build/$(K8S_CLI_BIN)-netobserv \
+		/usr/local/bin/$(K8S_CLI_BIN)-netobserv
 
 .PHONY: docs
 docs: oc-commands ## Generate asciidoc
