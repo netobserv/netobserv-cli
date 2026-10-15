@@ -37,6 +37,14 @@ type startedCommand struct {
 	ptmx *os.File
 }
 
+// PTYInput sends bytes to a command's controlling terminal after Delay. It is
+// intentionally small and byte-oriented so callers can exercise both regular
+// keys and control sequences such as Ctrl-Space and Escape.
+type PTYInput struct {
+	Delay time.Duration
+	Data  []byte
+}
+
 // trackStarted keeps a reference to the PTY master until StopStartedCommands is called, and
 // drains it so its buffer never fills up.
 func trackStarted(cmd *exec.Cmd, ptmx *os.File) {
@@ -288,4 +296,63 @@ func RunCommandAndTerminate(log *logrus.Entry, commandName string, arg ...string
 
 	// Combine stderr first (errors more visible), then stdout
 	return sbErr.String() + sbOut.String(), nil
+}
+
+// RunCommandWithPTYInput runs a command in a real pseudo-terminal and sends
+// the supplied keyboard input in order. Unlike RunCommandAndTerminate, this
+// keeps the terminal output intact, which makes it suitable for checking that
+// the collector actually renders and reacts to keyboard input.
+func RunCommandWithPTYInput(log *logrus.Entry, commandName string, args []string, inputs ...PTYInput) (string, error) {
+	log.WithFields(logrus.Fields{"cmd": commandName}).Info("Running command with PTY input")
+
+	cmd := exec.Command(commandName, args...)
+	cmd.Env = append(cmd.Environ(), "isE2E=true")
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		return "", err
+	}
+
+	var output strings.Builder
+	readDone := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&output, ptmx)
+		close(readDone)
+	}()
+
+	commandDone := make(chan error, 1)
+	go func() { commandDone <- cmd.Wait() }()
+
+	deadline := time.NewTimer(RunCommandTimeout)
+	defer deadline.Stop()
+
+	var commandErr error
+	for _, input := range inputs {
+		timer := time.NewTimer(input.Delay)
+		select {
+		case <-timer.C:
+			if _, err := ptmx.Write(input.Data); err != nil {
+				log.Debugf("Could not write PTY input: %v", err)
+			}
+		case commandErr = <-commandDone:
+			timer.Stop()
+			goto wait
+		case <-deadline.C:
+			timer.Stop()
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+			commandErr = <-commandDone
+			goto wait
+		}
+	}
+
+	select {
+	case commandErr = <-commandDone:
+	case <-deadline.C:
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		commandErr = <-commandDone
+	}
+
+wait:
+	_ = ptmx.Close()
+	<-readDone
+	return output.String(), commandErr
 }

@@ -1,6 +1,6 @@
 # HTTP cleartext test pod
 
-Minimal pod that serves **plain HTTP** (no TLS) on port **8080**. Use it to validate NetObserv PCA wire capture: HTTP is readable on the wire without `--enable_openssl`, `--enable_gotls`, or `--enable_ktls`.
+Minimal pod that serves **plain HTTP** (no TLS) on port **8080**. Use it to validate NetObserv packet capture: HTTP is readable on the wire without TLS instrumentation.
 
 ## Deploy and traffic
 
@@ -36,7 +36,5 @@ Marker in responses: `NETOBSERV-HTTP` (see `GET /message`).
 |-----|------|---------------|--------------|
 | **http-test** (this) | 8080 | none (PCA) | Wire HTTP (cleartext) |
 | [openssl-test](../openssl-test-pod/) | 8443 | `--enable_openssl` | TLS Plaintext |
-| [gotls-test](../gotls-test-pod/) | 8443 | `--enable_gotls` | TLS Plaintext |
-| [ktls-test](../ktls-test-pod/) | 8443 | `--enable_ktls` | TLS Plaintext |
 
 See [examples/README.md](../README.md) for the full TLS showcase.

@@ -1,13 +1,11 @@
-# TLS plaintext showcase workloads
+# Packet capture showcase workloads
 
-Three minimal HTTPS pods demo NetObserv TLS plaintext capture. A fourth **cleartext HTTP** pod demos PCA wire readability (no TLS flags).
+Two minimal workloads demo NetObserv packet capture: an HTTPS pod for OpenSSL plaintext capture and a cleartext HTTP pod for packet inspection.
 
 | Pod | TLS stack | CLI flag | Marker | Example header |
 |-----|-----------|----------|--------|----------------|
 | [http-test-pod](http-test-pod/) | none (HTTP) | _(PCA only)_ | `NETOBSERV-HTTP` | `X-NetObserv-Stack: http` |
 | [openssl-test-pod](openssl-test-pod/) | nginx + `libssl.so` | `--enable_openssl` | `NETOBSERV-OPENSSL` | `X-NetObserv-Stack: openssl` |
-| [gotls-test-pod](gotls-test-pod/) | Go `crypto/tls` | `--enable_gotls` | `NETOBSERV-GOTLS` | `X-NetObserv-Stack: gotls` |
-| [ktls-test-pod](ktls-test-pod/) | nginx + kTLS (`sk_msg`) | `--enable_ktls` | `NETOBSERV-KTLS` | `X-NetObserv-Stack: ktls` |
 
 ## Cleartext HTTP (PCA)
 
@@ -45,7 +43,7 @@ make deploy-local-all wait-all traffic-all
 |----------|---------|
 | `GET /message` | Multi-line plaintext + fake response headers (`HTTP/1.1 200 OK`, `X-Fake-Trace-Id`, …) |
 | `GET /api/items` | JSON body with stack-specific `"sku"` values |
-| `POST /api/echo` | POST body from traffic Job; **gotls** also echoes `received_request_headers` in the response |
+| `POST /api/echo` | POST body from the traffic Job |
 | `GET /healthz` | Short probe response (kubelet noise — keep for readiness only) |
 
 Traffic Jobs send fake **request** headers (`Authorization`, `X-Fake-Trace-Id: <stack>-req-*`, `X-NetObserv-Client`) on every call.
@@ -68,7 +66,7 @@ NETOBSERV_AGENT_IMAGE=quay.io/you/netobserv-ebpf-agent:plaintext \
 **Stress test:** all flags, port only (no `--peer_ip`):
 
 ```bash
-./build/oc-netobserv packets --port=8443 --enable_openssl --enable_gotls --enable_ktls --privileged
+./build/oc-netobserv packets --port=8443 --enable_openssl --privileged
 ```
 
 Annotated plaintext (`PcapAnnotated: true`) picks up `SrcK8S_*` / `DstK8S_*` from the correlated wire packet (PCA rows are FLP-enriched). For better agent 5-tuple without a single pod IP, use `--peer_cidr=10.244.0.0/16` (Kind default pod network). See `make capture-hint`.
@@ -77,9 +75,9 @@ Keep `make traffic-all` running during capture.
 
 ## What to look for in the live TUI
 
-- **Green rows** — TLS plaintext (`RecordType` column shows `openssl` / `gotls` / `ktls`)
+- **Green rows** — TLS plaintext (`RecordType` column shows `openssl`)
 - **`PlaintextPreview`** — should include `HTTP/1.1 200 OK`, fake `X-Fake-*` headers, then `NETOBSERV-<STACK> …`
-- **Binary noise** — kTLS/gRPC framing shows as `<ktls write 8190B binary>` when not HTTP-shaped
+- **Binary noise** — non-HTTP payloads are shown as binary previews when they are not HTTP-shaped
 - **Row select** — opens hex panel with full decoded payload (pauses live ingest)
 - **`+` / `-`** — increase “Showing last: N” if the table feels sparse
 
@@ -104,12 +102,5 @@ jq 'select(.PcapAnnotated == true) | {TLSSource, PlaintextPreview}' output/plain
 | `--tls_plaintext_preview_bytes=512` | Longer `PlaintextPreview` column (includes more headers) |
 | `--peer_cidr=10.244.0.0/16` | Scope to pod network instead of single `--peer_ip` |
 
-See [docs/tls-decryption-coverage.md](../docs/tls-decryption-coverage.md) for limits, `PcapAnnotated`, and fd→inode 5-tuple enrichment.
-
-## Ideas not covered yet (future)
-
-- **Large response** (`/large`, 8–16 KiB) — preview truncation vs hex panel
-- **HTTP errors** (`418` / `404`) — non-200 status lines in plaintext
-- **Read-direction capture** — inbound HTTP requests on server (GoTLS read uprobes disabled today)
-- **SSLKEYLOGFILE** sidecar — `--tls-keylog` wire decryption path (requires app change)
-- **Java / BoringSSL** workloads — Envoy/Istio mesh scenarios
+The OpenSSL example demonstrates userspace TLS plaintext capture and packet correlation. The
+cleartext example demonstrates wire-level HTTP decoding without TLS instrumentation.

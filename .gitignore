@@ -4,6 +4,7 @@ tmp
 cover.out
 kubeconfig
 netobserv-cli.tar.gz
+release-assets/
 cli-e2e-img.tar
 e2e/commands
 e2e/output

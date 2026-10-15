@@ -2,15 +2,7 @@
 
 Minimal pod that serves HTTPS with **nginx + dynamically linked OpenSSL 3** (`libssl.so`). Use it to validate NetObserv packet capture with `--enable_openssl`.
 
-This is the right workload for OpenSSL uprobes. It does **not** use Go `crypto/tls` (see [gotls-test-pod](../gotls-test-pod/)) and does **not** enable kernel TLS offload (see [ktls-test-pod](../ktls-test-pod/)).
-
-## Why not use gotls-test or ktls-test with `--enable_openssl`?
-
-| Test pod | TLS stack | Flag for green plaintext rows |
-|----------|-----------|-------------------------------|
-| **openssl-test** (this) | nginx + `libssl.so` | `--enable_openssl` |
-| [gotls-test](../gotls-test-pod/) | Go `crypto/tls` | `--enable_gotls` (not `--enable_openssl`) |
-| [ktls-test](../ktls-test-pod/) | nginx + kTLS offload | `--enable_ktls` when kernel offloads; if kTLS is active, OpenSSL uprobes often see **no** application data |
+This is the repository's OpenSSL uprobe workload and should be captured with `--enable_openssl`.
 
 ## 1. Build and push (Quay)
 
@@ -26,7 +18,6 @@ make images
 make images IMAGE_ORG=netobserv
 # => quay.io/netobserv/openssl-test:latest
 ```
-
 **Local Kind cluster** (no registry pull):
 
 ```bash
@@ -132,8 +123,6 @@ Run `make help` for targets.
 | Symptom | Check |
 |---------|--------|
 | CLI warns about missing `--peer_ip` | Expected without peer scope — add `--peer_ip=$(make pod-ip)` to narrow hooks and reduce noise |
-| No green rows with `--enable_openssl` on **gotls-test** | Wrong flag — use `--enable_gotls` for Go TLS |
-| No green rows on **ktls-test** with `--enable_openssl` | kTLS may offload TLS to the kernel; use this **openssl-test** pod, or `--enable_ktls` on ktls-test |
 | No green rows, agent logs show `TLS plaintext event captured` but JSONL is empty | **`--port` without `--peer_ip`** used to drop plaintext before export when no 5-tuple (fixed in agent `plaintext3+`); workaround: add `--peer_ip=<pod-ip>`; rebuild agent |
 | Green rows delayed ~30s | Plaintext waits for wire-packet correlation; pause capture or wait for buffer flush |
 | `no libssl.so libraries discovered` in agent logs | Agent needs `hostPID=true` and `--privileged`; redeploy capture with `--enable_openssl --privileged` |
@@ -147,8 +136,3 @@ Run `make help` for targets.
 ```bash
 make undeploy
 ```
-
-## Related examples
-
-- [GoTLS test pod](../gotls-test-pod/) — `--enable_gotls`
-- [kTLS test pod](../ktls-test-pod/) — `--enable_ktls`
