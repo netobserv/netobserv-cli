@@ -83,7 +83,7 @@ echo "[id=\"cli-reference-packet-capture-options_{context}\"]
 == Packets capture options
 You can filter packets capture data the as same as flows capture by using the filters.
 Certain features, such as packets drop, DNS, RTT, and network events, are only available for flows and metrics capture.
-To capture plaintext from dynamically linked OpenSSL applications, use \`--enable_openssl\` with a peer or port filter. The option requires a privileged agent and adds plaintext records to the packet capture output.
+To capture plaintext from dynamically linked OpenSSL applications, use \`--enable_openssl\` with a peer or port filter. The option grants the agent \`hostPID\` and the \`SYS_PTRACE\` and \`SYS_ADMIN\` capabilities, and adds plaintext records to the packet capture output.
 
 .\`oc netobserv packets\` syntax
 [source,terminal]

@@ -62,9 +62,10 @@ $ oc netobserv flows [<feature_option>] [<command_options>]
 |--enable_pkt_translation|    enable packet translation                             | false
 |--enable_pkt_drop|           enable packet drop                                    | false
 |--enable_rtt|                enable RTT tracking                                   | false
+|--enable_secondary_networks| enable secondary networks                             | false; adds CAP_SYS_ADMIN
 |--enable_udn_mapping|        enable User Defined Network mapping                   | false
 |--get-subnets|               get subnets information                               | false
-|--privileged|                force eBPF agent privileged mode                      | auto
+|--privileged|                force eBPF agent privileged mode                      | false
 |--sampling|                  packets sampling interval                             | 1
 |--background|                run in background                                     | false
 |--copy|                      copy the output files locally                         | prompt
@@ -105,7 +106,7 @@ $ oc netobserv flows --enable_pkt_drop  --enable_rtt --action=Accept --cidr=0.0.
 == Packets capture options
 You can filter packets capture data the as same as flows capture by using the filters.
 Certain features, such as packets drop, DNS, RTT, and network events, are only available for flows and metrics capture.
-To capture plaintext from dynamically linked OpenSSL applications, use `--enable_openssl` with a peer or port filter. The option requires a privileged agent and adds plaintext records to the packet capture output.
+To capture plaintext from dynamically linked OpenSSL applications, use `--enable_openssl` with a peer or port filter. The option grants the agent `hostPID` and the `SYS_PTRACE` and `SYS_ADMIN` capabilities, and adds plaintext records to the packet capture output.
 
 .`oc netobserv packets` syntax
 [source,terminal]
@@ -120,7 +121,7 @@ $ oc netobserv packets [<option>]
 |--log-level|                 components logs                                       | info
 |--max-time|                  maximum capture time                                  | 5m
 |--max-bytes|                 maximum capture bytes                                 | 50000000 = 50MB
-|--enable_openssl|            capture TLS plaintext via OpenSSL uprobes             | false; privileged agent; recommended: --peer_ip --port
+|--enable_openssl|            capture TLS plaintext via OpenSSL uprobes             | false; adds CAP_SYS_PTRACE+CAP_SYS_ADMIN; recommended: --peer_ip --port
 |--tls_process_allowlist|     restrict TLS uprobes to comma-separated process names | all non-infra; e.g. nginx,envoy
 |--tls_plaintext_min_bytes|   drop TLS plaintext events shorter than N bytes         | 0; agent env TLS_PLAINTEXT_MIN_BYTES
 |--tls_plaintext_preview_bytes|PlaintextPreview length; zero means full payload    | 256
@@ -172,9 +173,10 @@ $ oc netobserv metrics [<option>]
 |--enable_pkt_translation|    enable packet translation                             | false
 |--enable_pkt_drop|           enable packet drop                                    | false
 |--enable_rtt|                enable RTT tracking                                   | false
+|--enable_secondary_networks| enable secondary networks                             | false; adds CAP_SYS_ADMIN
 |--enable_udn_mapping|        enable User Defined Network mapping                   | false
 |--get-subnets|               get subnets information                               | false
-|--privileged|                force eBPF agent privileged mode                      | auto
+|--privileged|                force eBPF agent privileged mode                      | false
 |--sampling|                  packets sampling interval                             | 1
 |--background|                run in background                                     | false
 |--log-level|                 components logs                                       | info

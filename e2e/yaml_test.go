@@ -110,6 +110,7 @@ func TestFlowFiltersYAML(t *testing.T) {
 			assert.Contains(t, yamls[5], "kind: SecurityContextConstraints")
 			assert.Contains(t, yamls[5], "name: netobserv-cli")
 			assert.Contains(t, yamls[5], "namespace: \"netobserv-cli\"")
+			assert.Contains(t, Normalize(yamls[5]), Normalize("allowedCapabilities: - BPF - PERFMON - NET_ADMIN - SYS_ADMIN - SYS_PTRACE"))
 
 			assert.Contains(t, yamls[6], "kind: Role")
 			assert.Contains(t, yamls[6], "name: netobserv-cli")
@@ -328,8 +329,8 @@ func TestPacketOpenSSLYAML(t *testing.T) {
 			assert.Contains(t, normalized, Normalize(`name: TLS_PLAINTEXT_PROCESS_ALLOWLIST`))
 			assert.Contains(t, normalized, Normalize(`value: "nginx"`))
 
-			// verify privileged mode
-			assert.Contains(t, normalized, Normalize(`privileged: true`))
+			// verify granular privileges are used rather than privileged mode
+			assert.Contains(t, normalized, Normalize(`privileged: false`))
 
 			// verify hostPID
 			assert.Contains(t, normalized, Normalize(`hostPID: true`))
@@ -338,8 +339,10 @@ func TestPacketOpenSSLYAML(t *testing.T) {
 			assert.Contains(t, normalized, Normalize(`name: host-usr`))
 			assert.Contains(t, normalized, Normalize(`mountPath: /host/usr`))
 
-			// verify SYS_PTRACE capability
+			// verify the capabilities replacing privileged mode: SYS_PTRACE to read other
+			// containers' /proc and find their libssl, SYS_ADMIN to attach the uprobes
 			assert.Contains(t, normalized, Normalize(`SYS_PTRACE`))
+			assert.Contains(t, normalized, Normalize(`SYS_ADMIN`))
 
 			// verify port filter
 			assert.Contains(t, ds, `"port": 8443`)
@@ -348,6 +351,115 @@ func TestPacketOpenSSLYAML(t *testing.T) {
 		},
 	).Feature()
 	testCluster.TestEnv().Test(t, f1)
+}
+
+// Agent privileges are granted per feature: no feature turns on privileged mode, each one mounts
+// only the host paths it needs, and only secondary networks adds a capability. Privileged mode
+// still implies secondary networks, for backward compatibility.
+func TestAgentPrivilegesYAML(t *testing.T) {
+	absCmd, err := filepath.Abs("commands/oc-netobserv")
+	assert.Nil(t, err)
+	origDir, err := os.Getwd()
+	assert.Nil(t, err)
+
+	allHostPaths := []string{"bpf-kernel-debug", "var-run-ovn", "var-run-ovs", "var-run-netns"}
+
+	tests := []struct {
+		name string
+		args []string
+		// strings expected in the generated DaemonSet, and strings that must not appear
+		expected   []string
+		unexpected []string
+	}{
+		{
+			name:       "no feature",
+			args:       []string{"flows"},
+			expected:   []string{`privileged: false`, `"BPF"`, `"PERFMON"`, `"NET_ADMIN"`},
+			unexpected: append([]string{"SYS_ADMIN", "SYS_PTRACE"}, allHostPaths...),
+		},
+		{
+			name:       "packet drops mount the kernel debug filesystem only",
+			args:       []string{"flows", "--enable_pkt_drop"},
+			expected:   []string{`privileged: false`, "bpf-kernel-debug", "/sys/kernel/debug"},
+			unexpected: []string{"SYS_ADMIN", "var-run-ovn", "var-run-ovs", "var-run-netns"},
+		},
+		{
+			name:       "network events mount the OVN/OVS directories only",
+			args:       []string{"flows", "--enable_network_events"},
+			expected:   []string{`privileged: false`, "var-run-ovn", "var-run-ovs"},
+			unexpected: []string{"SYS_ADMIN", "bpf-kernel-debug", "var-run-netns"},
+		},
+		{
+			name:       "UDN mapping mounts the OVN/OVS directories only",
+			args:       []string{"flows", "--enable_udn_mapping"},
+			expected:   []string{`privileged: false`, "var-run-ovn", "var-run-ovs"},
+			unexpected: []string{"SYS_ADMIN", "bpf-kernel-debug", "var-run-netns"},
+		},
+		{
+			name: "secondary networks mount the netns directory and add SYS_ADMIN",
+			args: []string{"flows", "--enable_secondary_networks"},
+			expected: []string{`privileged: false`, "SYS_ADMIN", "var-run-netns", "/var/run/netns",
+				`name: ENABLE_SECONDARY_NETWORKS value: "true"`},
+			unexpected: []string{"bpf-kernel-debug", "var-run-ovn", "var-run-ovs"},
+		},
+		{
+			name: "privileged implies secondary networks",
+			args: []string{"flows", "--privileged"},
+			expected: []string{`privileged: true`, "SYS_ADMIN", "var-run-netns",
+				`name: ENABLE_SECONDARY_NETWORKS value: "true"`},
+			unexpected: []string{"bpf-kernel-debug", "var-run-ovn", "var-run-ovs"},
+		},
+		{
+			name:       "all features do not need privileged mode",
+			args:       []string{"flows", "--enable_all"},
+			expected:   append([]string{`privileged: false`, "SYS_ADMIN"}, allHostPaths...),
+			unexpected: []string{`privileged: true`},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// run from a temp dir so each case reads back its own generated YAML
+			assert.Nil(t, os.Chdir(t.TempDir()))
+			defer os.Chdir(origDir)
+
+			output, err := RunCommand(ylog, absCmd, append(tt.args, "--yaml")...)
+			assert.Nil(t, err)
+			assert.NotEmpty(t, output)
+
+			ds := Normalize(generatedDaemonSet(t, "flows_capture"))
+			for _, e := range tt.expected {
+				assert.Contains(t, ds, Normalize(e), "%q expected in DaemonSet", e)
+			}
+			for _, u := range tt.unexpected {
+				assert.NotContains(t, ds, Normalize(u), "%q should not be in DaemonSet", u)
+			}
+		})
+	}
+}
+
+// generatedDaemonSet returns the DaemonSet document of the single capture YAML written in ./output
+func generatedDaemonSet(t *testing.T, filePrefix string) string {
+	var yamls []string
+	assert.True(t, dirExists("output"), "output directory not found")
+	err := filepath.Walk("output", func(path string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() && strings.Contains(path, filePrefix) && filepath.Ext(path) == ".yml" {
+			yamls = append(yamls, path)
+		}
+		return nil
+	})
+	assert.Nil(t, err)
+	assert.Equal(t, 1, len(yamls))
+
+	yamlBytes, err := os.ReadFile(yamls[0])
+	assert.Nil(t, err)
+	for _, doc := range strings.Split(string(yamlBytes), "---") {
+		if strings.Contains(doc, "kind: DaemonSet") {
+			return doc
+		}
+	}
+	t.Fatal("DaemonSet not found in generated YAML")
+	return ""
 }
 
 // test metrics only as YAML output as kind can't manage ServiceMonitor CR

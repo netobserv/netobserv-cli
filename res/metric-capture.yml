@@ -58,6 +58,8 @@ spec:
             value: "false"
           - name: ENABLE_PKT_TRANSLATION
             value: "false"
+          - name: ENABLE_SECONDARY_NETWORKS
+            value: "false"
           - name: FLOW_FILTER_RULES
             value: >-
               []
@@ -72,26 +74,3 @@ spec:
         - name: prometheus
           containerPort: 9401
           protocol: TCP
-        volumeMounts:
-            - name: bpf-kernel-debug
-              mountPath: /sys/kernel/debug
-              mountPropagation: HostToContainer
-            - name: var-run-ovn
-              mountPath: /var/run/ovn
-              mountPropagation: HostToContainer
-            - name: var-run-ovs
-              mountPath: /var/run/openvswitch
-              mountPropagation: HostToContainer
-      volumes:
-        - name: bpf-kernel-debug
-          hostPath:
-            path: /sys/kernel/debug
-            type: Directory
-        - name: var-run-ovn
-          hostPath:
-            path: /var/run/ovn-ic
-            type: DirectoryOrCreate
-        - name: var-run-ovs
-          hostPath:
-            path: /var/run/openvswitch
-            type: DirectoryOrCreate

@@ -49,6 +49,8 @@ spec:
             value: "256"
           - name: TLS_PLAINTEXT_PROCESS_ALLOWLIST
             value: ""
+          - name: ENABLE_SECONDARY_NETWORKS
+            value: "false"
           - name: METRICS_ENABLE
             value: "false"
           - name: LOG_LEVEL
@@ -63,12 +65,3 @@ spec:
           - name: FLP_CONFIG
             value: |
               {}
-        volumeMounts:
-            - name: bpf-kernel-debug
-              mountPath: /sys/kernel/debug
-              mountPropagation: HostToContainer
-      volumes:
-        - name: bpf-kernel-debug
-          hostPath:
-            path: /sys/kernel/debug
-            type: Directory

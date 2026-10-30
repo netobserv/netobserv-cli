@@ -85,7 +85,7 @@ function packets_examples {
   echo "  Capture packets on port 8080:"
   echo "    netobserv packets --port=8080"
   echo "  Capture HTTPS with OpenSSL plaintext via libssl uprobes:"
-  echo "    netobserv packets --port=8443 --enable_openssl --peer_ip=<pod-ip> --privileged --background"
+  echo "    netobserv packets --port=8443 --enable_openssl --peer_ip=<pod-ip> --background"
   echo "  Capture OpenSSL plaintext scoped by process name:"
   echo "    netobserv packets --port=8443 --enable_openssl --tls_process_allowlist=nginx"
   echo "    # test workload: examples/openssl-test-pod/"
@@ -122,9 +122,10 @@ function features_usage {
   echo "  --enable_pkt_translation:     enable packet translation                             (default: false)"
   echo "  --enable_pkt_drop:            enable packet drop                                    (default: false)"
   echo "  --enable_rtt:                 enable RTT tracking                                   (default: false)"
+  echo "  --enable_secondary_networks:  enable secondary networks                             (default: false; adds CAP_SYS_ADMIN)"
   echo "  --enable_udn_mapping:         enable User Defined Network mapping                   (default: false)"
   echo "  --get-subnets:                get subnets information                               (default: false)"
-  echo "  --privileged:                 force eBPF agent privileged mode                      (default: auto)"
+  echo "  --privileged:                 force eBPF agent privileged mode                      (default: false)"
   echo "  --sampling:                   packets sampling interval                             (default: 1)"
 }
 
@@ -138,7 +139,7 @@ function flowsAndPackets_collector_usage {
 }
 
 function packets_tls_usage {
-  echo "  --enable_openssl:             capture TLS plaintext via OpenSSL uprobes             (default: false; privileged agent; recommended: --peer_ip --port)"
+  echo "  --enable_openssl:             capture TLS plaintext via OpenSSL uprobes             (default: false; adds CAP_SYS_PTRACE+CAP_SYS_ADMIN; recommended: --peer_ip --port)"
   echo "  --tls_process_allowlist:      restrict TLS uprobes to comma-separated process names (default: all non-infra; e.g. nginx,envoy)"
   echo "  --tls_plaintext_min_bytes:    drop TLS plaintext events shorter than N bytes         (default: 0; agent env TLS_PLAINTEXT_MIN_BYTES)"
   echo "  --tls_plaintext_preview_bytes: PlaintextPreview length; zero means full payload    (default: 256)"

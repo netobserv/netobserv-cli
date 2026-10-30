@@ -91,13 +91,14 @@ NETOBSERV_COLLECTOR_IMAGE=quay.io/jpinsonn/network-observability-cli:plaintext2 
   --port=8443 \
   --peer_ip="${OPENSSL_POD_IP}" \
   --enable_openssl \
-  --privileged \
   --max-bytes=100000000
 ```
 
 `--peer_ip` scopes uprobes and helps plaintext pass agent filters when the 5-tuple is not enriched yet. Match **both** agent and collector image tags to your local builds (`plaintext3` / `plaintext2` above are examples).
 
-`--enable_openssl` sets `hostPID`, host `/usr`/`/lib`/`/lib64` mounts, and `ENABLE_OPENSSL_TRACKING=true` on the agent DaemonSet.
+`--enable_openssl` sets `hostPID`, the `SYS_PTRACE` and `SYS_ADMIN` capabilities, host `/usr`/`/lib`/`/lib64` mounts, and `ENABLE_OPENSSL_TRACKING=true` on the agent DaemonSet.
+
+`SYS_PTRACE` lets the agent read other containers' `/proc/<pid>/maps` and `/proc/<pid>/root` to find their libssl; `SYS_ADMIN` is required by `perf_event_open` to attach the uprobes. Both are needed — with only one, discovery or attachment fails.
 
 Keep traffic running during capture (`make traffic` or repeated `curl`).
 
@@ -136,7 +137,7 @@ Run `make help` for targets.
 | No green rows on **ktls-test** with `--enable_openssl` | kTLS may offload TLS to the kernel; use this **openssl-test** pod, or `--enable_ktls` on ktls-test |
 | No green rows, agent logs show `TLS plaintext event captured` but JSONL is empty | **`--port` without `--peer_ip`** used to drop plaintext before export when no 5-tuple (fixed in agent `plaintext3+`); workaround: add `--peer_ip=<pod-ip>`; rebuild agent |
 | Green rows delayed ~30s | Plaintext waits for wire-packet correlation; pause capture or wait for buffer flush |
-| `no libssl.so libraries discovered` in agent logs | Agent needs `hostPID=true` and `--privileged`; redeploy capture with `--enable_openssl --privileged` |
+| `no libssl.so libraries discovered` in agent logs | Agent needs `hostPID=true` and `SYS_PTRACE`, both set by `--enable_openssl`; if the platform still denies access to other containers' `/proc` (e.g. SELinux), retry with `--privileged` |
 | `attached SSL_write` but no plaintext | Custom agent image with TLS capture; keep `make traffic` running; check `FLOW_FILTER_RULES` port matches 8443 |
 | `peer_ip` scoped but no hooks | `hostPID` must be true; pod IP must match `--peer_ip`; agent DaemonSet on the **same node** as the workload |
 | Only health-probe lines (`GET /healthz`) | Normal — also hit `/` and `/api/items` via `make traffic` |
