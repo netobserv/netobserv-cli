@@ -114,18 +114,15 @@ type httpClient struct {
 }
 
 func (c *httpClient) URL(ep string, args map[string]string) *url.URL {
-	components := strings.Split(path.Join(c.endpoint.Path, ep), "/")
-	for i, component := range components {
-		if !strings.HasPrefix(component, ":") {
-			continue
-		}
-		if val, ok := args[component[1:]]; ok {
-			components[i] = val
-		}
+	p := path.Join(c.endpoint.Path, ep)
+
+	for arg, val := range args {
+		arg = ":" + arg
+		p = strings.ReplaceAll(p, arg, val)
 	}
 
 	u := *c.endpoint
-	u.Path = strings.Join(components, "/")
+	u.Path = p
 
 	return &u
 }

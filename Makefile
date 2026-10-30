@@ -8,6 +8,7 @@ VERSION ?= main
 # Go architecture and targets images to build
 GOARCH ?= amd64
 MULTIARCH_TARGETS ?= amd64
+KREW_PLATFORMS ?= linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 
 # In CI, to be replaced by `netobserv`
 IMAGE_ORG ?= $(USER)
@@ -16,7 +17,9 @@ IMAGE_ORG ?= $(USER)
 NAME := network-observability-cli
 DIST_DIR ?= build
 FILES_OUTPUT_DIR ?= output
-OUTPUT := $(DIST_DIR)/$(NAME)
+RELEASE_ASSETS_DIR ?= release-assets
+COLLECTOR_OUTPUT := $(DIST_DIR)/$(NAME)
+UNIT_PACKAGES := $(shell go list -mod=vendor ./... | grep -v '/e2e/integration-tests$$')
 
 # Available commands for development with args
 COMMANDS = flows packets cleanup
@@ -57,8 +60,13 @@ ifneq ($(CLEAN_BUILD),)
 endif
 
 GOLANGCI_LINT_VERSION = v2.12.2
-BASH_VERSION = v4.2.0
-YQ_VERSION = v4.45.1
+
+# Baked into the client plugin binary (cmd/plugin) at build time, the same way LDFLAGS bakes
+# main.buildVersion/main.buildDate into the in-pod binary.
+CLIENT_LDFLAGS = -X 'main.version=$(VERSION)' \
+	-X 'github.com/netobserv/network-observability-cli/internal/plugin/commands.defaultCollectorImage=$(IMAGE)' \
+	-X 'github.com/netobserv/network-observability-cli/internal/plugin/commands.defaultAgentImage=$(AGENT_IMAGE)' \
+	-X 'github.com/netobserv/network-observability-cli/internal/plugin/commands.defaultPullPolicy=$(PULL_POLICY)'
 
 # build a single arch target provided as argument
 define build_target
@@ -78,6 +86,16 @@ define manifest_add_target
 	DOCKER_BUILDKIT=1 $(OCI_BIN) manifest add ${IMAGE} ${IMAGE}-$(1);
 endef
 
+# Build one native Krew plugin archive. The plugin does not use cgo, so disabling cgo makes
+# cross-compilation reproducible and produces portable binaries for Krew's supported platforms.
+define build_krew_target
+	echo 'building Krew plugin for $(1)/$(2)'; \
+	mkdir -p $(RELEASE_ASSETS_DIR)/$(1)-$(2); \
+	CGO_ENABLED=0 GOOS=$(1) GOARCH=$(2) go build -ldflags "$(CLIENT_LDFLAGS)" -mod vendor -o $(RELEASE_ASSETS_DIR)/$(1)-$(2)/netobserv ./cmd/plugin; \
+	cp LICENSE $(RELEASE_ASSETS_DIR)/$(1)-$(2)/LICENSE; \
+	tar -czf $(RELEASE_ASSETS_DIR)/netobserv-cli-$(VERSION)-$(1)-$(2).tar.gz -C $(RELEASE_ASSETS_DIR)/$(1)-$(2) netobserv LICENSE;
+endef
+
 ##@ General
 
 .PHONY: prepare
@@ -91,7 +109,6 @@ prereqs: ## Install dependencies
 	test -f ./bin/golangci-lint-${GOLANGCI_LINT_VERSION} || ( \
 		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s ${GOLANGCI_LINT_VERSION} \
 		&& mv ./bin/golangci-lint ./bin/golangci-lint-${GOLANGCI_LINT_VERSION})
-	GOFLAGS="" go install github.com/mikefarah/yq/v4@${YQ_VERSION}
 
 .PHONY: vendors
 vendors: ## Refresh vendors directory.
@@ -100,15 +117,15 @@ vendors: ## Refresh vendors directory.
 
 ##@ Develop
 
-.PHONY: compile
-compile: ## Build the binary
-	@echo "### Compiling project"
-	GOARCH=${GOARCH} go build ${BUILD_FLAGS} -mod vendor -o $(OUTPUT)
+.PHONY: build-collector
+build-collector: ## Build the collector binary into DIST_DIR
+	@echo "### Building collector"
+	GOARCH=${GOARCH} go build ${BUILD_FLAGS} -mod vendor -o $(COLLECTOR_OUTPUT) ./cmd/collector
 
 .PHONY: test
-test: ## Test code using go test
+test: ## Run unit tests and generate cover.out (cluster integration tests excluded)
 	@echo "### Testing code"
-	GOOS=$(GOOS) go test -mod vendor -a ./... -coverpkg=./... -coverprofile cover.out
+	GOOS=$(GOOS) go test -mod vendor $(UNIT_PACKAGES) -coverprofile cover.out
 
 .PHONY: tests-e2e
 tests-e2e: VERSION=test
@@ -124,8 +141,8 @@ tests-e2e: oc-commands ## Run e2e tests using kind cluster
 	GOOS=$(GOOS) go test -p 1 -timeout 30m -v -mod vendor -tags e2e ./e2e/...
 
 .PHONY: tests-int
-tests-int: ## Run e2e integration tests. You need a running cluster connected
-	GOOS= go test -p 1 -timeout 30m -v -mod vendor ./e2e/integration-tests/...
+tests-int: ## Run cluster integration tests. Requires KUBECONFIG and oc-netobserv in PATH
+	GOOS= go test -p 1 -timeout 30m -v -mod vendor -tags integration ./e2e/integration-tests/...
 
 .PHONY: coverage-report
 coverage-report: ## Generate coverage report
@@ -146,39 +163,29 @@ fmt: ## Run go fmt against code.
 lint: prereqs ## Lint code
 	@echo "### Linting code"
 	./bin/golangci-lint-${GOLANGCI_LINT_VERSION} run ./... --timeout=3m
-ifeq (, $(shell which shellcheck))
-	@echo "### shellcheck could not be found, skipping shell lint"
-else
-	@echo "### Run shellcheck against bash scripts"
-	find . -name '*.sh' -not -path "./vendor/*" | xargs shellcheck
-endif
 
 .PHONY: clean
 clean: ## Clean up build directory
 	@rm -rf $(DIST_DIR)
 	@rm -rf $(FILES_OUTPUT_DIR)
+	@rm -rf $(RELEASE_ASSETS_DIR)
+
+.PHONY: build-plugin
+build-plugin: ## Build the client plugin binary (oc-netobserv/kubectl-netobserv, or 'netobserv' for krew) into DIST_DIR
+	@echo "### Building $(K8S_CLI_BIN) client plugin"
+	@mkdir -p $(DIST_DIR)
+	GOARCH=${GOARCH} go build -ldflags "$(CLIENT_LDFLAGS)" -mod vendor -o $(DIST_DIR)/$(if $(filter true,$(KREW_PLUGIN)),netobserv,$(K8S_CLI_BIN)-netobserv) ./cmd/plugin
 
 .PHONY: commands
-commands: ## Generate either oc or kubectl plugins and add them to build folder
-	@echo "### Generating $(K8S_CLI_BIN) commands"
-	DIST_DIR=$(DIST_DIR) \
-	K8S_CLI_BIN=$(K8S_CLI_BIN) \
-	IMAGE=$(IMAGE) \
-	PULL_POLICY=$(PULL_POLICY) \
-	AGENT_IMAGE=$(AGENT_IMAGE) \
-	VERSION=$(VERSION) \
-	REQUIRED_BASH_VERSION=$(BASH_VERSION) \
-	REQUIRED_YQ_VERSION=$(YQ_VERSION) \
-	SUPPORTED_ARCHS=$(MULTIARCH_TARGETS) \
-	./scripts/inject.sh
+commands: build-plugin ## Compatibility alias for building the client plugin
 
 .PHONY: kubectl-commands
 kubectl-commands: K8S_CLI_BIN=kubectl
-kubectl-commands: commands ## Generate kubectl plugins and add them to build folder
+kubectl-commands: commands ## Build the kubectl client plugin binary into DIST_DIR
 
 .PHONY: oc-commands
 oc-commands: K8S_CLI_BIN=oc
-oc-commands: commands ## Generate oc plugins and add them to build folder
+oc-commands: commands ## Build the oc client plugin binary into DIST_DIR
 
 .PHONY: install-commands
 install-commands: commands
@@ -188,26 +195,26 @@ install-commands: commands
 
 .PHONY: docs
 docs: oc-commands ## Generate asciidoc
-	./scripts/generate-doc.sh
+	go run -mod vendor ./cmd/devtools/gendocs
 
 .PHONY: update-config
 update-config: ## Update config from operator repo
-	./scripts/update-config.sh
+	go run -mod vendor ./cmd/devtools/updateconfig
 
 .PHONY: release
 release: clean ## Generate tar.gz containing krew plugin
-	$(MAKE) KREW_PLUGIN=true kubectl-commands
-	tar -czf netobserv-cli.tar.gz LICENSE ./build/netobserv
+	@mkdir -p $(RELEASE_ASSETS_DIR)
+	$(foreach target,$(KREW_PLATFORMS),$(call build_krew_target,$(word 1,$(subst /, ,$(target))),$(word 2,$(subst /, ,$(target)))))
 
 .PHONY: create-kind-cluster
 create-kind-cluster: prereqs ## Create a kind cluster
-	scripts/kind-cluster.sh
+	go run -mod vendor ./cmd/devtools/kindcluster
 
 .PHONY: destroy-kind-cluster
 destroy-kind-cluster: KUBECONFIG=./kubeconfig
 destroy-kind-cluster: ## Destroy the kind cluster.
 	test -s ./kubeconfig || { echo "kubeconfig does not exist! Exiting..."; exit 1; }
-	$(K8S_CLI_BIN) delete -f ./res/namespace.yml --ignore-not-found
+	$(K8S_CLI_BIN) delete namespace netobserv-cli --ignore-not-found
 	kind delete cluster --name netobserv-cli-cluster
 	rm ./kubeconfig
 

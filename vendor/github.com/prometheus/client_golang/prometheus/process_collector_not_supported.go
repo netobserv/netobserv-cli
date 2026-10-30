@@ -12,6 +12,7 @@
 // limitations under the License.
 
 //go:build wasip1 || js || ios
+// +build wasip1 js ios
 
 package prometheus
 

@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path"
@@ -13,13 +14,121 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
+	sigsyaml "sigs.k8s.io/yaml"
+
+	agentconfig "github.com/netobserv/netobserv-ebpf-agent/pkg/config"
 )
 
 var (
 	ylog = logrus.WithField("component", "yaml_test")
 )
+
+// splitYAMLDocs splits a `---`-separated multi-document YAML file into its documents, the same
+// way the old bash-era tests did, since internal/k8s/client.YAMLWriter still separates
+// documents with a bare "---" line.
+func splitYAMLDocs(t *testing.T, yamlPath string) []string {
+	t.Helper()
+	data, err := os.ReadFile(yamlPath)
+	require.NoError(t, err)
+	return strings.Split(string(data), "---")
+}
+
+// findGeneratedYAML returns the single *_capture_*.yml file matching prefix under dirPath,
+// replacing the filepath.Walk-based lookups every test below used to duplicate.
+func findGeneratedYAML(t *testing.T, dirPath, prefix string) string {
+	t.Helper()
+	var matches []string
+	err := filepath.Walk(dirPath, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && strings.Contains(p, prefix) && filepath.Ext(p) == ".yml" {
+			matches = append(matches, p)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Len(t, matches, 1, "expected exactly one %s*.yml file under %s", prefix, dirPath)
+	return matches[0]
+}
+
+// findDocByKind returns the first document whose `kind:` matches, decoded as a generic map for
+// field-order-independent inspection.
+func findDocByKind(t *testing.T, docs []string, kind string) map[string]any {
+	t.Helper()
+	for _, doc := range docs {
+		if strings.TrimSpace(doc) == "" {
+			continue
+		}
+		var m map[string]any
+		require.NoError(t, sigsyaml.Unmarshal([]byte(doc), &m))
+		// Decode-then-compare, rather than a raw "kind: X" substring match: "kind: Service"
+		// would also match a "kind: ServiceAccount" document, since the latter's text contains
+		// the former as a substring.
+		if m["kind"] == kind {
+			return m
+		}
+	}
+	t.Fatalf("no document with kind %q found", kind)
+	return nil
+}
+
+// decodeDaemonSet finds and fully decodes the DaemonSet document into a typed object, so this
+// package can inspect its env vars/volumes/securityContext exactly like
+// internal/plugin/manifests/agent's own unit tests do, rather than pattern-matching raw YAML text whose
+// field order depends on internal/k8s/client.ToUnstructured's map-based round trip.
+func decodeDaemonSet(t *testing.T, docs []string) *appsv1.DaemonSet {
+	t.Helper()
+	m := findDocByKind(t, docs, "DaemonSet")
+	data, err := sigsyaml.Marshal(m)
+	require.NoError(t, err)
+	var ds appsv1.DaemonSet
+	require.NoError(t, sigsyaml.Unmarshal(data, &ds))
+	return &ds
+}
+
+func envVar(t *testing.T, ds *appsv1.DaemonSet, name string) string {
+	t.Helper()
+	require.NotEmpty(t, ds.Spec.Template.Spec.Containers)
+	for _, e := range ds.Spec.Template.Spec.Containers[0].Env {
+		if e.Name == name {
+			return e.Value
+		}
+	}
+	t.Fatalf("env var %q not found", name)
+	return ""
+}
+
+func optionalEnvVar(ds *appsv1.DaemonSet, name string) string {
+	if len(ds.Spec.Template.Spec.Containers) == 0 {
+		return ""
+	}
+	for _, env := range ds.Spec.Template.Spec.Containers[0].Env {
+		if env.Name == name {
+			return env.Value
+		}
+	}
+	return ""
+}
+
+func flowFilters(t *testing.T, ds *appsv1.DaemonSet) []agentconfig.FlowFilter {
+	t.Helper()
+	var filters []agentconfig.FlowFilter
+	require.NoError(t, json.Unmarshal([]byte(envVar(t, ds, "FLOW_FILTER_RULES")), &filters))
+	return filters
+}
+
+func assertCommonSetupMessages(t *testing.T, output string, agentsLabel string) {
+	t.Helper()
+	assert.Contains(t, output, "creating netobserv-cli namespace")
+	assert.Contains(t, output, "creating service account")
+	assert.Contains(t, output, fmt.Sprintf("creating %s agents", agentsLabel))
+	assert.Contains(t, output, "Check the generated YAML file in output folder")
+}
 
 func TestFlowFiltersYAML(t *testing.T) {
 	f1 := features.New("flow yaml").Setup(
@@ -36,102 +145,36 @@ func TestFlowFiltersYAML(t *testing.T) {
 			assert.Nil(t, err)
 
 			assert.NotEmpty(t, output)
-			// ensure script setup is fine
-			assert.Contains(t, output, "creating netobserv-cli namespace")
-			assert.Contains(t, output, "creating service account")
+			assertCommonSetupMessages(t, output, "flow-capture")
 			assert.Contains(t, output, "creating collector service")
-			assert.Contains(t, output, "creating flow-capture agents")
-			// check CLI done successfully
-			assert.Contains(t, output, "Check the generated YAML file in output folder")
 
 			return ctx
 		},
 	).Assess("check generated yaml output",
 		func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			var yamls []string
+			assert.True(t, dirExists("output"))
+			yamlPath := findGeneratedYAML(t, "output", "flows_capture")
+			docs := splitYAMLDocs(t, yamlPath)
+			require.Len(t, docs, 10)
 
-			dirPath := "output"
-			assert.True(t, dirExists(dirPath), "directory %s not found", dirPath)
-			err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
-				if err != nil {
-					fmt.Println(err)
-				}
+			ns := findDocByKind(t, docs, "Namespace")
+			assert.Equal(t, "netobserv-cli", metadataField(t, ns, "name"))
+			assert.Equal(t, "privileged", nestedField(t, ns, "metadata", "labels", "pod-security.kubernetes.io/enforce"))
 
-				if !info.IsDir() {
-					if strings.Contains(path, "flows_capture") && filepath.Ext(path) == ".yml" {
-						yamls = append(yamls, path)
-					}
-				}
+			svc := findDocByKind(t, docs, "Service")
+			assert.Equal(t, "collector", metadataField(t, svc, "name"))
 
-				return nil
-			})
-			assert.Nil(t, err)
+			ds := decodeDaemonSet(t, docs)
+			assert.Equal(t, "netobserv-cli", ds.Namespace)
 
-			// check yaml file
-			assert.Equal(t, 1, len(yamls))
-			yamlBytes, err := os.ReadFile(yamls[0])
-			assert.Nil(t, err)
+			filters := flowFilters(t, ds)
+			require.Len(t, filters, 2)
+			assert.Equal(t, "TCP", filters[0].Protocol)
+			assert.Equal(t, int32(8080), filters[0].Port)
+			assert.Equal(t, "UDP", filters[1].Protocol)
 
-			// check yamls parts
-			yamlStr := string(yamlBytes[:])
-			yamls = strings.Split(yamlStr, "---")
-			assert.Equal(t, 10, len(yamls))
-
-			// check yaml contents
-			assert.Contains(t, yamls[0], "kind: Namespace")
-			assert.Contains(t, yamls[0], "name: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[0]), Normalize("labels:app:netobserv-clipod-security.kubernetes.io/enforce:privilegedpod-security.kubernetes.io/audit:privilegedopenshift.io/cluster-monitoring:\"true\""))
-
-			assert.Contains(t, yamls[1], "kind: ServiceAccount")
-			assert.Contains(t, yamls[1], "name: netobserv-cli")
-			assert.Contains(t, yamls[1], "namespace: \"netobserv-cli\"")
-
-			assert.Contains(t, yamls[2], "kind: ClusterRole")
-			assert.Contains(t, yamls[2], "name: netobserv-cli")
-			assert.Contains(t, yamls[2], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - security.openshift.io resourceNames: - privileged resources: - securitycontextconstraints verbs: - use"))
-			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - apps resources: - daemonsets verbs: - list - get - watch - delete"))
-			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - resources: - pods - services - nodes verbs: - list - get - watch"))
-			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - apps resources: - replicasets verbs: - list - get - watch"))
-			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - config.openshift.io resources: - apiservers resourceNames: - cluster verbs: - get"))
-
-			assert.Contains(t, yamls[3], "kind: ClusterRoleBinding")
-			assert.Contains(t, yamls[3], "name: netobserv-cli")
-			assert.Contains(t, yamls[3], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[3]), Normalize("subjects: - kind: ServiceAccount name: netobserv-cli namespace: \"netobserv-cli\""))
-			assert.Contains(t, Normalize(yamls[3]), Normalize("roleRef: apiGroup: rbac.authorization.k8s.io kind: ClusterRole name: netobserv-cli"))
-
-			assert.Contains(t, yamls[4], "kind: ClusterRoleBinding")
-			assert.Contains(t, yamls[4], "name: netobserv-cli-monitoring")
-			assert.Contains(t, yamls[4], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[4]), Normalize("subjects: - kind: ServiceAccount name: netobserv-cli namespace: \"netobserv-cli\""))
-			assert.Contains(t, Normalize(yamls[4]), Normalize("roleRef: apiGroup: rbac.authorization.k8s.io kind: ClusterRole name: cluster-monitoring-view"))
-
-			assert.Contains(t, yamls[5], "kind: SecurityContextConstraints")
-			assert.Contains(t, yamls[5], "name: netobserv-cli")
-			assert.Contains(t, yamls[5], "namespace: \"netobserv-cli\"")
-
-			assert.Contains(t, yamls[6], "kind: Role")
-			assert.Contains(t, yamls[6], "name: netobserv-cli")
-			assert.Contains(t, yamls[6], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[6]), Normalize("- apiGroups: - resources: - configmaps verbs: - get - create - update"))
-
-			assert.Contains(t, yamls[7], "kind: RoleBinding")
-			assert.Contains(t, yamls[7], "name: netobserv-cli")
-			assert.Contains(t, yamls[7], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[7]), Normalize("subjects: - kind: ServiceAccount name: netobserv-cli namespace: \"netobserv-cli\""))
-			assert.Contains(t, Normalize(yamls[7]), Normalize("roleRef: apiGroup: rbac.authorization.k8s.io kind: Role name: netobserv-cli"))
-
-			assert.Contains(t, yamls[8], "kind: Service")
-			assert.Contains(t, yamls[8], "name: collector")
-			assert.Contains(t, yamls[8], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[8]), Normalize("ports: - name: collector protocol: TCP port: 9999 targetPort: 9999"))
-
-			assert.Contains(t, yamls[9], "kind: DaemonSet")
-			assert.Contains(t, yamls[9], "name: netobserv-cli")
-			assert.Contains(t, yamls[9], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[9]), Normalize("[{\"direction\": \"\", \"ip_cidr\": \"0.0.0.0/0\", \"protocol\": \"TCP\", \"source_port\": 0, \"destination_port\": 0, \"port\": 8080, \"source_port_range\": \"\", \"source_ports\": \"\", \"destination_port_range\": \"\", \"destination_ports\": \"\", \"port_range\": \"\", \"ports\": \"\", \"icmp_type\": 0, \"icmp_code\": 0, \"peer_ip\": \"\", \"peer_cidr\": \"\", \"action\": \"Accept\", \"tcp_flags\": \"\", \"drops\": false}, {\"direction\": \"\", \"ip_cidr\": \"0.0.0.0/0\", \"protocol\": \"UDP\", \"source_port\": 0, \"destination_port\": 0, \"port\": 0, \"source_port_range\": \"\", \"source_ports\": \"\", \"destination_port_range\": \"\", \"destination_ports\": \"\", \"port_range\": \"\", \"ports\": \"\", \"icmp_type\": 0, \"icmp_code\": 0, \"peer_ip\": \"\", \"peer_cidr\": \"\", \"action\": \"Accept\", \"tcp_flags\": \"\", \"drops\": false}]"))
-			assert.Contains(t, Normalize(yamls[9]), Normalize("\"grpc\": { \"targetHost\": \"collector.netobserv-cli.svc.cluster.local\", \"targetPort\": 9999 }"))
+			require.NotEmpty(t, ds.Spec.Template.Spec.Containers)
+			assert.Contains(t, ds.Spec.Template.Spec.Containers[0].Image, "netobserv-ebpf-agent")
 
 			return ctx
 		},
@@ -152,102 +195,23 @@ func TestPacketFiltersYAML(t *testing.T) {
 			assert.Nil(t, err)
 
 			assert.NotEmpty(t, output)
-			// ensure script setup is fine
-			assert.Contains(t, output, "creating netobserv-cli namespace")
-			assert.Contains(t, output, "creating service account")
+			assertCommonSetupMessages(t, output, "packet-capture")
 			assert.Contains(t, output, "creating collector service")
-			assert.Contains(t, output, "creating packet-capture agents")
-			// check CLI done successfully
-			assert.Contains(t, output, "Check the generated YAML file in output folder")
 
 			return ctx
 		},
 	).Assess("check generated yaml output",
 		func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			var yamls []string
+			assert.True(t, dirExists("output"))
+			yamlPath := findGeneratedYAML(t, "output", "packets_capture")
+			docs := splitYAMLDocs(t, yamlPath)
+			require.Len(t, docs, 10)
 
-			dirPath := "output"
-			assert.True(t, dirExists(dirPath), "directory %s not found", dirPath)
-			err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
-				if err != nil {
-					fmt.Println(err)
-				}
-
-				if !info.IsDir() {
-					if strings.Contains(path, "packets_capture") && filepath.Ext(path) == ".yml" {
-						yamls = append(yamls, path)
-					}
-				}
-
-				return nil
-			})
-			assert.Nil(t, err)
-
-			// check yaml file
-			assert.Equal(t, 1, len(yamls))
-			yamlBytes, err := os.ReadFile(yamls[0])
-			assert.Nil(t, err)
-
-			// check yamls parts
-			yamlStr := string(yamlBytes[:])
-			yamls = strings.Split(yamlStr, "---")
-			assert.Equal(t, 10, len(yamls))
-
-			// check yaml contents
-			assert.Contains(t, yamls[0], "kind: Namespace")
-			assert.Contains(t, yamls[0], "name: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[0]), Normalize("labels:app:netobserv-clipod-security.kubernetes.io/enforce:privilegedpod-security.kubernetes.io/audit:privilegedopenshift.io/cluster-monitoring:\"true\""))
-
-			assert.Contains(t, yamls[1], "kind: ServiceAccount")
-			assert.Contains(t, yamls[1], "name: netobserv-cli")
-			assert.Contains(t, yamls[1], "namespace: \"netobserv-cli\"")
-
-			assert.Contains(t, yamls[2], "kind: ClusterRole")
-			assert.Contains(t, yamls[2], "name: netobserv-cli")
-			assert.Contains(t, yamls[2], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - security.openshift.io resourceNames: - privileged resources: - securitycontextconstraints verbs: - use"))
-			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - apps resources: - daemonsets verbs: - list - get - watch - delete"))
-			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - resources: - pods - services - nodes verbs: - list - get - watch"))
-			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - apps resources: - replicasets verbs: - list - get - watch"))
-			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - config.openshift.io resources: - apiservers resourceNames: - cluster verbs: - get"))
-
-			assert.Contains(t, yamls[3], "kind: ClusterRoleBinding")
-			assert.Contains(t, yamls[3], "name: netobserv-cli")
-			assert.Contains(t, yamls[3], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[3]), Normalize("subjects: - kind: ServiceAccount name: netobserv-cli namespace: \"netobserv-cli\""))
-			assert.Contains(t, Normalize(yamls[3]), Normalize("roleRef: apiGroup: rbac.authorization.k8s.io kind: ClusterRole name: netobserv-cli"))
-
-			assert.Contains(t, yamls[4], "kind: ClusterRoleBinding")
-			assert.Contains(t, yamls[4], "name: netobserv-cli-monitoring")
-			assert.Contains(t, yamls[4], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[4]), Normalize("subjects: - kind: ServiceAccount name: netobserv-cli namespace: \"netobserv-cli\""))
-			assert.Contains(t, Normalize(yamls[4]), Normalize("roleRef: apiGroup: rbac.authorization.k8s.io kind: ClusterRole name: cluster-monitoring-view"))
-
-			assert.Contains(t, yamls[5], "kind: SecurityContextConstraints")
-			assert.Contains(t, yamls[5], "name: netobserv-cli")
-			assert.Contains(t, yamls[5], "namespace: \"netobserv-cli\"")
-
-			assert.Contains(t, yamls[6], "kind: Role")
-			assert.Contains(t, yamls[6], "name: netobserv-cli")
-			assert.Contains(t, yamls[6], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[6]), Normalize("- apiGroups: - resources: - configmaps verbs: - get - create - update"))
-
-			assert.Contains(t, yamls[7], "kind: RoleBinding")
-			assert.Contains(t, yamls[7], "name: netobserv-cli")
-			assert.Contains(t, yamls[7], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[7]), Normalize("subjects: - kind: ServiceAccount name: netobserv-cli namespace: \"netobserv-cli\""))
-			assert.Contains(t, Normalize(yamls[7]), Normalize("roleRef: apiGroup: rbac.authorization.k8s.io kind: Role name: netobserv-cli"))
-
-			assert.Contains(t, yamls[8], "kind: Service")
-			assert.Contains(t, yamls[8], "name: collector")
-			assert.Contains(t, yamls[8], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[8]), Normalize("ports: - name: collector protocol: TCP port: 9999 targetPort: 9999"))
-
-			assert.Contains(t, yamls[9], "kind: DaemonSet")
-			assert.Contains(t, yamls[9], "name: netobserv-cli")
-			assert.Contains(t, yamls[9], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[9]), Normalize("[{\"direction\": \"\", \"ip_cidr\": \"0.0.0.0/0\", \"protocol\": \"\", \"source_port\": 0, \"destination_port\": 0, \"port\": 80, \"source_port_range\": \"\", \"source_ports\": \"\", \"destination_port_range\": \"\", \"destination_ports\": \"\", \"port_range\": \"\", \"ports\": \"\", \"icmp_type\": 0, \"icmp_code\": 0, \"peer_ip\": \"\", \"peer_cidr\": \"\", \"action\": \"Accept\", \"tcp_flags\": \"\", \"drops\": false}]"))
-			assert.Contains(t, Normalize(yamls[9]), Normalize("nodeSelector: netobserv: \"true\""))
+			ds := decodeDaemonSet(t, docs)
+			filters := flowFilters(t, ds)
+			require.Len(t, filters, 1)
+			assert.Equal(t, int32(80), filters[0].Port)
+			assert.Equal(t, "true", ds.Spec.Template.Spec.NodeSelector["netobserv"])
 
 			return ctx
 		},
@@ -282,67 +246,42 @@ func TestPacketOpenSSLYAML(t *testing.T) {
 		},
 	).Assess("check generated yaml has openssl config",
 		func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			var yamls []string
+			assert.True(t, dirExists("output"))
+			yamlPath := findGeneratedYAML(t, "output", "packets_capture")
+			docs := splitYAMLDocs(t, yamlPath)
+			ds := decodeDaemonSet(t, docs)
 
-			dirPath := "output"
-			assert.True(t, dirExists(dirPath), "directory %s not found", dirPath)
-			err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
-				if err != nil {
-					fmt.Println(err)
-				}
+			assert.Equal(t, "true", envVar(t, ds, "ENABLE_OPENSSL_TRACKING"))
+			assert.Equal(t, "nginx", envVar(t, ds, "TLS_PLAINTEXT_PROCESS_ALLOWLIST"))
 
-				if !info.IsDir() {
-					if strings.Contains(path, "packets_capture") && filepath.Ext(path) == ".yml" {
-						yamls = append(yamls, path)
-					}
-				}
+			require.NotEmpty(t, ds.Spec.Template.Spec.Containers)
+			c := ds.Spec.Template.Spec.Containers[0]
+			require.NotNil(t, c.SecurityContext)
+			require.NotNil(t, c.SecurityContext.Privileged)
+			assert.True(t, *c.SecurityContext.Privileged)
+			assert.True(t, ds.Spec.Template.Spec.HostPID)
 
-				return nil
-			})
-			assert.Nil(t, err)
-
-			assert.Equal(t, 1, len(yamls))
-			yamlBytes, err := os.ReadFile(yamls[0])
-			assert.Nil(t, err)
-
-			yamlStr := string(yamlBytes[:])
-			yamls = strings.Split(yamlStr, "---")
-
-			// find the DaemonSet
-			var ds string
-			for _, y := range yamls {
-				if strings.Contains(y, "kind: DaemonSet") {
-					ds = y
-					break
+			var hasHostUsr bool
+			for _, v := range ds.Spec.Template.Spec.Volumes {
+				if v.Name == "host-usr" {
+					hasHostUsr = true
 				}
 			}
-			assert.NotEmpty(t, ds, "DaemonSet not found in generated YAML")
+			assert.True(t, hasHostUsr, "expected a host-usr volume for libssl discovery")
 
-			normalized := Normalize(ds)
+			var hasSysPtrace bool
+			if c.SecurityContext.Capabilities != nil {
+				for _, cap := range c.SecurityContext.Capabilities.Add {
+					if cap == "SYS_PTRACE" {
+						hasSysPtrace = true
+					}
+				}
+			}
+			assert.True(t, hasSysPtrace)
 
-			// verify OpenSSL tracking is enabled
-			assert.Contains(t, normalized, Normalize(`name: ENABLE_OPENSSL_TRACKING`))
-			assert.Contains(t, normalized, Normalize(`value: "true"`))
-
-			// verify process allowlist is set
-			assert.Contains(t, normalized, Normalize(`name: TLS_PLAINTEXT_PROCESS_ALLOWLIST`))
-			assert.Contains(t, normalized, Normalize(`value: "nginx"`))
-
-			// verify privileged mode
-			assert.Contains(t, normalized, Normalize(`privileged: true`))
-
-			// verify hostPID
-			assert.Contains(t, normalized, Normalize(`hostPID: true`))
-
-			// verify host volume mounts for libssl discovery
-			assert.Contains(t, normalized, Normalize(`name: host-usr`))
-			assert.Contains(t, normalized, Normalize(`mountPath: /host/usr`))
-
-			// verify SYS_PTRACE capability
-			assert.Contains(t, normalized, Normalize(`SYS_PTRACE`))
-
-			// verify port filter
-			assert.Contains(t, ds, `"port": 8443`)
+			filters := flowFilters(t, ds)
+			require.Len(t, filters, 1)
+			assert.Equal(t, int32(8443), filters[0].Port)
 
 			return ctx
 		},
@@ -361,123 +300,26 @@ func TestMetricYAML(t *testing.T) {
 			assert.Nil(t, err)
 
 			assert.NotEmpty(t, output)
-			// ensure script setup is fine
-			assert.Contains(t, output, "creating netobserv-cli namespace")
-			assert.Contains(t, output, "creating service account")
+			assertCommonSetupMessages(t, output, "metric-capture")
 			assert.Contains(t, output, "creating service monitor")
-			assert.Contains(t, output, "creating metric-capture agents")
-			// check CLI done successfully
-			assert.Contains(t, output, "Check the generated YAML file in output folder.")
 
 			return ctx
 		},
 	).Assess("check generated yaml output",
 		func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			var yamls []string
+			assert.True(t, dirExists("output"))
+			yamlPath := findGeneratedYAML(t, "output", "metrics_capture")
+			docs := splitYAMLDocs(t, yamlPath)
+			require.Len(t, docs, 14)
 
-			dirPath := "output"
-			assert.True(t, dirExists(dirPath), "directory %s not found", dirPath)
-			err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
-				if err != nil {
-					fmt.Println(err)
-				}
+			sm := findDocByKind(t, docs, "ServiceMonitor")
+			assert.Equal(t, "netobserv-cli", metadataField(t, sm, "name"))
 
-				if !info.IsDir() {
-					if strings.Contains(path, "metrics_capture") && filepath.Ext(path) == ".yml" {
-						yamls = append(yamls, path)
-					}
-				}
+			dashboardCM := findDocByKind(t, docs, "ConfigMap")
+			assert.Equal(t, "openshift-config-managed", metadataField(t, dashboardCM, "namespace"))
 
-				return nil
-			})
-			assert.Nil(t, err)
-
-			// check yaml file
-			assert.Equal(t, 1, len(yamls))
-			yamlBytes, err := os.ReadFile(yamls[0])
-			assert.Nil(t, err)
-
-			// check yamls parts
-			yamlStr := string(yamlBytes[:])
-			yamls = strings.Split(yamlStr, "---")
-			assert.Equal(t, 14, len(yamls))
-
-			// check yaml contents
-			assert.Contains(t, yamls[0], "kind: Namespace")
-			assert.Contains(t, yamls[0], "name: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[0]), Normalize("labels:app:netobserv-clipod-security.kubernetes.io/enforce:privilegedpod-security.kubernetes.io/audit:privilegedopenshift.io/cluster-monitoring:\"true\""))
-
-			assert.Contains(t, yamls[1], "kind: ServiceAccount")
-			assert.Contains(t, yamls[1], "name: netobserv-cli")
-			assert.Contains(t, yamls[1], "namespace: \"netobserv-cli\"")
-
-			assert.Contains(t, yamls[2], "kind: ClusterRole")
-			assert.Contains(t, yamls[2], "name: netobserv-cli")
-			assert.Contains(t, yamls[2], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - security.openshift.io resourceNames: - privileged resources: - securitycontextconstraints verbs: - use"))
-			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - apps resources: - daemonsets verbs: - list - get - watch - delete"))
-			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - resources: - pods - services - nodes verbs: - list - get - watch"))
-			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - apps resources: - replicasets verbs: - list - get - watch"))
-			assert.Contains(t, Normalize(yamls[2]), Normalize("- apiGroups: - config.openshift.io resources: - apiservers resourceNames: - cluster verbs: - get"))
-
-			assert.Contains(t, yamls[3], "kind: ClusterRoleBinding")
-			assert.Contains(t, yamls[3], "name: netobserv-cli")
-			assert.Contains(t, yamls[3], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[3]), Normalize("subjects: - kind: ServiceAccount name: netobserv-cli namespace: \"netobserv-cli\""))
-			assert.Contains(t, Normalize(yamls[3]), Normalize("roleRef: apiGroup: rbac.authorization.k8s.io kind: ClusterRole name: netobserv-cli"))
-
-			assert.Contains(t, yamls[4], "kind: ClusterRoleBinding")
-			assert.Contains(t, yamls[4], "name: netobserv-cli-monitoring")
-			assert.Contains(t, yamls[4], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[4]), Normalize("subjects: - kind: ServiceAccount name: netobserv-cli namespace: \"netobserv-cli\""))
-			assert.Contains(t, Normalize(yamls[4]), Normalize("roleRef: apiGroup: rbac.authorization.k8s.io kind: ClusterRole name: cluster-monitoring-view"))
-
-			assert.Contains(t, yamls[5], "kind: SecurityContextConstraints")
-			assert.Contains(t, yamls[5], "name: netobserv-cli")
-			assert.Contains(t, yamls[5], "namespace: \"netobserv-cli\"")
-
-			assert.Contains(t, yamls[6], "kind: Role")
-			assert.Contains(t, yamls[6], "name: netobserv-cli")
-			assert.Contains(t, yamls[6], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[6]), Normalize("- apiGroups: - resources: - configmaps verbs: - get - create - update"))
-
-			assert.Contains(t, yamls[7], "kind: RoleBinding")
-			assert.Contains(t, yamls[7], "name: netobserv-cli")
-			assert.Contains(t, yamls[7], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[7]), Normalize("subjects: - kind: ServiceAccount name: netobserv-cli namespace: \"netobserv-cli\""))
-			assert.Contains(t, Normalize(yamls[7]), Normalize("roleRef: apiGroup: rbac.authorization.k8s.io kind: Role name: netobserv-cli"))
-
-			assert.Contains(t, yamls[8], "kind: ClusterRole")
-			assert.Contains(t, yamls[8], "name: netobserv-cli-metrics")
-			assert.Contains(t, yamls[8], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[8]), Normalize("- apiGroups: - resources: - pods - services - endpoints verbs: - list - get - watch - nonResourceURLs: - /metrics verbs: - get"))
-
-			assert.Contains(t, yamls[9], "kind: ClusterRoleBinding")
-			assert.Contains(t, yamls[9], "name: netobserv-cli")
-			assert.Contains(t, yamls[9], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[9]), Normalize("subjects: - kind: ServiceAccount name: prometheus-k8s namespace: openshift-monitoring"))
-			assert.Contains(t, Normalize(yamls[9]), Normalize("roleRef: apiGroup: rbac.authorization.k8s.io kind: ClusterRole name: netobserv-cli-metrics"))
-
-			assert.Contains(t, yamls[10], "kind: ServiceMonitor")
-			assert.Contains(t, yamls[10], "name: netobserv-cli")
-			assert.Contains(t, yamls[10], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[10]), Normalize("namespaceSelector: matchNames: - \"netobserv-cli\""))
-			assert.Contains(t, Normalize(yamls[10]), Normalize("selector: matchLabels: app: netobserv-cli"))
-
-			assert.Contains(t, yamls[11], "kind: Service")
-			assert.Contains(t, yamls[11], "name: netobserv-cli")
-			assert.Contains(t, yamls[11], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[11]), Normalize("ports: - name: prometheus protocol: TCP port: 9401 targetPort: 9401"))
-
-			assert.Contains(t, yamls[12], "kind: ConfigMap")
-			assert.Contains(t, yamls[12], "name: netobserv-cli")
-			assert.Contains(t, yamls[12], "namespace: openshift-config-managed")
-			assert.Contains(t, yamls[12], "console.openshift.io/dashboard: \"true\"")
-
-			assert.Contains(t, yamls[13], "kind: DaemonSet")
-			assert.Contains(t, yamls[13], "name: netobserv-cli")
-			assert.Contains(t, yamls[13], "namespace: \"netobserv-cli\"")
-			assert.Contains(t, Normalize(yamls[13]), Normalize("ports: - name: prometheus containerPort: 9401 protocol: TCP"))
+			ds := decodeDaemonSet(t, docs)
+			assert.NotEqual(t, "true", optionalEnvVar(ds, "ENABLE_PKT_DROPS"))
 
 			return ctx
 		},
@@ -485,8 +327,24 @@ func TestMetricYAML(t *testing.T) {
 	testCluster.TestEnv().Test(t, f1)
 }
 
-func Normalize(str string) string {
-	str = strings.ReplaceAll(str, "\n", "")
-	str = strings.ReplaceAll(str, " ", "")
-	return str
+func metadataField(t *testing.T, doc map[string]any, field string) string {
+	t.Helper()
+	return nestedField(t, doc, "metadata", field)
+}
+
+// nestedField walks a chain of map keys in a generically-decoded YAML document, replacing the
+// old Normalize()-and-substring-match approach: field order in internal/k8s/client's
+// unstructured round trip is not meaningful, so assertions here check values, not raw text.
+func nestedField(t *testing.T, doc map[string]any, path ...string) string {
+	t.Helper()
+	var cur any = doc
+	for _, key := range path {
+		m, ok := cur.(map[string]any)
+		require.True(t, ok, "path %v: %q is not a map", path, key)
+		cur, ok = m[key]
+		require.True(t, ok, "path %v: key %q not found", path, key)
+	}
+	s, ok := cur.(string)
+	require.True(t, ok, "path %v: value is not a string (%T)", path, cur)
+	return s
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/cespare/xxhash/v2"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/model"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/prometheus/client_golang/prometheus/internal"
 )
@@ -180,8 +181,8 @@ func (v2) NewDesc(fqName, help string, variableLabels ConstrainableLabels, const
 	d.constLabelPairs = make([]*dto.LabelPair, 0, len(constLabels))
 	for n, v := range constLabels {
 		d.constLabelPairs = append(d.constLabelPairs, &dto.LabelPair{
-			Name:  new(n),
-			Value: new(v),
+			Name:  proto.String(n),
+			Value: proto.String(v),
 		})
 	}
 	sort.Sort(internal.LabelPairSorter(d.constLabelPairs))
