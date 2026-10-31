@@ -276,6 +276,33 @@ function checkClusterVersion() {
   fi
 }
 
+# Managed OpenShift services with a hosted control plane expose that fact through the
+# Infrastructure API. This includes ROSA Hosted Control Planes and other HyperShift-based
+# offerings. Classic managed services do not currently expose a stable cluster-side marker;
+# those require an OCM/management-plane check and are intentionally not guessed here.
+function block_plaintext_on_managed_openshift() {
+  if [[ "$command" != "packets" || "$outputYAML" == "true" ]] || ! openssl_capture_enabled; then
+    return
+  fi
+  if [[ "$isOCP" != "true" ]]; then
+    return
+  fi
+
+  local infrastructure
+  if ! infrastructure=$(${K8S_CLI_BIN} get infrastructure.config.openshift.io cluster -o yaml 2>/dev/null); then
+    echo "Refusing TLS plaintext capture: unable to verify whether this OpenShift cluster is managed." >&2
+    exit 1
+  fi
+
+  local control_plane_topology hypershift_managed
+  control_plane_topology=$(echo "$infrastructure" | "$YQ_BIN" -r '.status.controlPlaneTopology // ""')
+  hypershift_managed=$(echo "$infrastructure" | "$YQ_BIN" -r '(.metadata.annotations."hypershift.openshift.io/managed" // .metadata.labels."hypershift.openshift.io/managed" // "")')
+  if [[ "$control_plane_topology" == "External" || "$hypershift_managed" == "true" ]]; then
+    echo "TLS plaintext capture is disabled on managed OpenShift clusters to prevent access to customer-sensitive data." >&2
+    exit 1
+  fi
+}
+
 function namespaceFound() {
   # ensure namespace doesn't exist, else we should not override content
   if ${K8S_CLI_BIN} get namespace "$namespace" --ignore-not-found=true | grep -q "$namespace"; then
@@ -399,6 +426,8 @@ function setup() {
       printf 'Remove not compatible features and try again\n' >&2
       exit 1
     fi
+
+    block_plaintext_on_managed_openshift
 
     if namespaceFound; then
       printf "%s namespace already exists. Ensure someone else is not running another capture on this cluster. Else use 'oc netobserv cleanup' to remove the namespace first.\n" "$namespace" >&2
