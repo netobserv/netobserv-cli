@@ -637,6 +637,29 @@ function setLastFlowFilter() {
   "$YQ_BIN" e --inplace " .spec.template.spec.containers[0].env[] |= select(.name == \"FLOW_FILTER_RULES\").value |=(fromjson | .[-1].$1 = $2 | tostring)" "$3"
 }
 
+# mount a host path in the agent container, unless already mounted
+# usage: addHostVolume <name> <host path> <host path type> <mount path>
+function addHostVolume() {
+  if [[ "$("$YQ_BIN" e "[.spec.template.spec.volumes[] | select(.name == \"$1\")] | length" "$manifest")" != "0" ]]; then
+    return
+  fi
+  "$YQ_BIN" e --inplace ".spec.template.spec.volumes += [{\"name\":\"$1\",\"hostPath\":{\"path\":\"$2\",\"type\":\"$3\"}}]" "$manifest"
+  "$YQ_BIN" e --inplace ".spec.template.spec.containers[0].volumeMounts += [{\"name\":\"$1\",\"mountPath\":\"$4\",\"mountPropagation\":\"HostToContainer\"}]" "$manifest"
+}
+
+# grant a linux capability to the agent container, unless already granted
+function addCapability() {
+  if [[ "$("$YQ_BIN" e ".spec.template.spec.containers[0].securityContext.capabilities.add[] | select(. == \"$1\")" "$manifest")" != "$1" ]]; then
+    "$YQ_BIN" e --inplace ".spec.template.spec.containers[0].securityContext.capabilities.add += [\"$1\"]" "$manifest"
+  fi
+}
+
+# network events and UDN mapping both read the OVN observability samples
+function addOVNVolumes() {
+  addHostVolume "var-run-ovn" "/var/run/ovn-ic" "DirectoryOrCreate" "/var/run/ovn"
+  addHostVolume "var-run-ovs" "/var/run/openvswitch" "DirectoryOrCreate" "/var/run/openvswitch"
+}
+
 # replace the configuration in the manifest file
 function edit_manifest() {
   if [ -z "${2}" ]; then
@@ -664,6 +687,10 @@ function edit_manifest() {
     "$YQ_BIN" e --inplace ".spec.template.spec.containers[0].env[] |= select(.name==\"EXCLUDE_INTERFACES\").value|=\"$2\"" "$manifest"
     ;;
   "pkt_drop_enable")
+    if [[ "$2" == "true" ]]; then
+      # packet drops hooks require the kernel debug filesystem
+      addHostVolume "bpf-kernel-debug" "/sys/kernel/debug" "Directory" "/sys/kernel/debug"
+    fi
     "$YQ_BIN" e --inplace ".spec.template.spec.containers[0].env[] |= select(.name==\"ENABLE_PKT_DROPS\").value|=\"$2\"" "$manifest"
     ;;
   "dns_enable")
@@ -673,10 +700,15 @@ function edit_manifest() {
     "$YQ_BIN" e --inplace ".spec.template.spec.containers[0].env[] |= select(.name==\"ENABLE_RTT\").value|=\"$2\"" "$manifest"
     ;;
   "network_events_enable")
+    if [[ "$2" == "true" ]]; then
+      addOVNVolumes
+    fi
     "$YQ_BIN" e --inplace ".spec.template.spec.containers[0].env[] |= select(.name==\"ENABLE_NETWORK_EVENTS_MONITORING\").value|=\"$2\"" "$manifest"
     ;;
   "udn_enable")
     if [[ "$2" == "true" ]]; then
+      addOVNVolumes
+
       # add udn to secondary network indexes
       copyFLPConfig "$manifest"
       getNetworkEnrichStage
@@ -694,6 +726,14 @@ function edit_manifest() {
     ;;
   "ipsec_enable")
     "$YQ_BIN" e --inplace ".spec.template.spec.containers[0].env[] |= select(.name==\"ENABLE_IPSEC_TRACKING\").value|=\"$2\"" "$manifest"
+    ;;
+  "secondary_networks_enable")
+    if [[ "$2" == "true" ]]; then
+      # listing network namespaces requires the host netns directory and SYS_ADMIN
+      addHostVolume "var-run-netns" "/var/run/netns" "Directory" "/var/run/netns"
+      addCapability "SYS_ADMIN"
+    fi
+    "$YQ_BIN" e --inplace ".spec.template.spec.containers[0].env[] |= select(.name==\"ENABLE_SECONDARY_NETWORKS\").value|=\"$2\"" "$manifest"
     ;;
   "openssl_enable")
     "$YQ_BIN" e --inplace ".spec.template.spec.containers[0].env[] |= select(.name==\"ENABLE_OPENSSL_TRACKING\").value|=\"$2\"" "$manifest"
@@ -713,9 +753,10 @@ function edit_manifest() {
       "$YQ_BIN" e --inplace '.spec.template.spec.containers[0].volumeMounts += [{"name":"host-usr","mountPath":"/host/usr","readOnly":true},{"name":"host-lib","mountPath":"/host/lib","readOnly":true},{"name":"host-lib64","mountPath":"/host/lib64","readOnly":true}]' "$manifest"
     fi
     "$YQ_BIN" e --inplace '.spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem = false' "$manifest"
-    if [[ "$("$YQ_BIN" e '.spec.template.spec.containers[0].securityContext.capabilities.add[] | select(. == "SYS_PTRACE")' "$manifest")" != "SYS_PTRACE" ]]; then
-      "$YQ_BIN" e --inplace '.spec.template.spec.containers[0].securityContext.capabilities.add += ["SYS_PTRACE"]' "$manifest"
-    fi
+    # SYS_PTRACE: read /proc/<pid>/maps and /proc/<pid>/root of other containers to find their libssl
+    addCapability "SYS_PTRACE"
+    # SYS_ADMIN: perf_event_open rejects uprobe attachment without it
+    addCapability "SYS_ADMIN"
     ;;
   "host_pid")
     "$YQ_BIN" e --inplace ".spec.template.spec.hostPID|=$2" "$manifest"
@@ -1172,7 +1213,6 @@ function parse_args() {
       if [[ "$command" == "flows" || "$command" == "metrics" ]]; then
         defaultValue "true"
         if [[ "$value" == "true" ]]; then
-          edit_manifest "privileged" "$value"
           edit_manifest "pkt_drop_enable" "$value"
           includeList="$includeList,workload_egress_bytes_total,namespace_drop_packets_total"
         elif [[ "$value" == "false" ]]; then
@@ -1224,7 +1264,6 @@ function parse_args() {
       if [[ "$command" == "flows" || "$command" == "metrics" ]]; then
         defaultValue "true"
         if [[ "$value" == "true" ]]; then
-          edit_manifest "privileged" "$value"
           edit_manifest "network_events_enable" "$value"
           includeList="$includeList,namespace_network_policy_events_total"
         elif [[ "$value" == "false" ]]; then
@@ -1242,7 +1281,6 @@ function parse_args() {
       if [[ "$command" == "flows" || "$command" == "metrics" ]]; then
         defaultValue "true"
         if [[ "$value" == "true" ]]; then
-          edit_manifest "privileged" "$value"
           edit_manifest "udn_enable" "$value"
         elif [[ "$value" == "false" ]]; then
           # nothing to do there
@@ -1271,6 +1309,14 @@ function parse_args() {
         exit 1
       fi
       ;;
+    *enable_secondary_networks) # Enable capture on secondary networks
+      defaultValue "true"
+      if [[ "$value" == "true" || "$value" == "false" ]]; then
+        edit_manifest "secondary_networks_enable" "$value"
+      else
+        echo "invalid value for --enable_secondary_networks"
+      fi
+      ;;
     *enable_ipsec) # Enable IPSec Tracking
       if [[ "$command" == "flows" || "$command" == "metrics" ]]; then
         defaultValue "true"
@@ -1287,7 +1333,6 @@ function parse_args() {
     *enable_all) # Enable all features
       defaultValue "true"
       if [[ "$value" == "true" ]]; then
-        edit_manifest "privileged" "$value"
         edit_manifest "pkt_drop_enable" "$value"
         edit_manifest "dns_enable" "$value"
         edit_manifest "rtt_enable" "$value"
@@ -1295,6 +1340,7 @@ function parse_args() {
         edit_manifest "udn_enable" "$value"
         edit_manifest "pkt_xlat_enable" "$value"
         edit_manifest "ipsec_enable" "$value"
+        edit_manifest "secondary_networks_enable" "$value"
       elif [[ "$value" == "false" ]]; then
         # nothing to do there
         echo
@@ -1306,7 +1352,6 @@ function parse_args() {
       if [[ "$command" == "packets" ]]; then
         defaultValue "true"
         if [[ "$value" == "true" ]]; then
-          edit_manifest "privileged" "$value"
           edit_manifest "host_pid" "$value"
           edit_manifest "tls_host_mounts" ""
           edit_manifest "openssl_enable" "$value"
@@ -1363,6 +1408,8 @@ function parse_args() {
       defaultValue "true"
       if [[ "$value" == "true" ]]; then
         edit_manifest "privileged" "$value"
+        # backward compatibility: privileged used to imply capture on secondary networks
+        edit_manifest "secondary_networks_enable" "$value"
       elif [[ "$value" == "false" ]]; then
         # nothing to do there
         echo
@@ -1427,7 +1474,6 @@ function parse_args() {
     *drops) # Filter packet drops
       defaultValue "true"
       if [[ "$value" == "true" ]]; then
-        edit_manifest "privileged" "$value"
         edit_manifest "pkt_drop_enable" "$value"
         edit_manifest "filter_pkt_drops" "$value"
       elif [[ "$value" == "false" ]]; then

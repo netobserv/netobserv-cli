@@ -61,14 +61,13 @@ NETOBSERV_AGENT_IMAGE=quay.io/you/netobserv-ebpf-agent:plaintext \
   ./build/oc-netobserv packets \
   --port=8443 \
   --peer_ip="${OPENSSL_POD_IP}" \
-  --enable_openssl \
-  --privileged
+  --enable_openssl
 ```
 
 **Stress test:** all flags, port only (no `--peer_ip`):
 
 ```bash
-./build/oc-netobserv packets --port=8443 --enable_openssl --enable_gotls --enable_ktls --privileged
+./build/oc-netobserv packets --port=8443 --enable_openssl --enable_gotls --enable_ktls
 ```
 
 Annotated plaintext (`PcapAnnotated: true`) picks up `SrcK8S_*` / `DstK8S_*` from the correlated wire packet (PCA rows are FLP-enriched). For better agent 5-tuple without a single pod IP, use `--peer_cidr=10.244.0.0/16` (Kind default pod network). See `make capture-hint`.

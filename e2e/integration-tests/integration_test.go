@@ -16,6 +16,7 @@ import (
 	g "github.com/onsi/ginkgo/v2"
 	o "github.com/onsi/gomega"
 	"github.com/onsi/gomega/types"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
@@ -295,6 +296,8 @@ var _ = g.Describe("NetObserv CLI e2e integration test suite", g.Ordered, func()
 			it      string
 			cliArgs []string
 			matcher types.GomegaMatcher
+			// capabilities expected on the agent container, on top of the defaults
+			extraCaps []corev1.Capability
 		}{
 			{
 				when:    "Executing `oc netobserv flows`",
@@ -311,9 +314,29 @@ var _ = g.Describe("NetObserv CLI e2e integration test suite", g.Ordered, func()
 
 			{
 				when:    "Executing `oc netobserv flows --drops`",
-				it:      "runs as privileged",
+				it:      "does not run as privileged",
 				cliArgs: []string{"flows", "--drops", "--background", "--max-time=1m"},
-				matcher: o.BeTrue(),
+				matcher: o.BeFalse(),
+			},
+			{
+				when:    "Executing `oc netobserv flows --enable_network_events`",
+				it:      "does not run as privileged",
+				cliArgs: []string{"flows", "--enable_network_events", "--background", "--max-time=1m"},
+				matcher: o.BeFalse(),
+			},
+			{
+				when:    "Executing `oc netobserv flows --enable_udn_mapping`",
+				it:      "does not run as privileged",
+				cliArgs: []string{"flows", "--enable_udn_mapping", "--background", "--max-time=1m"},
+				matcher: o.BeFalse(),
+			},
+			{
+				// the agent only starts if the SCC allows the capability it asks for
+				when:      "Executing `oc netobserv flows --enable_secondary_networks`",
+				it:        "does not run as privileged and gets SYS_ADMIN",
+				cliArgs:   []string{"flows", "--enable_secondary_networks", "--background", "--max-time=1m"},
+				matcher:   o.BeFalse(),
+				extraCaps: []corev1.Capability{"SYS_ADMIN"},
 			},
 		}
 		for i, t := range tests {
@@ -338,6 +361,9 @@ var _ = g.Describe("NetObserv CLI e2e integration test suite", g.Ordered, func()
 					containers := ds.Spec.Template.Spec.Containers
 					o.Expect(len(containers)).To(o.Equal(1), "The number of containers specified in the template is != 1")
 					o.Expect(containers[0].SecurityContext.Privileged).To(o.HaveValue(t.matcher), "Priviledged is not set to true")
+					for _, c := range t.extraCaps {
+						o.Expect(containers[0].SecurityContext.Capabilities.Add).To(o.ContainElement(c), fmt.Sprintf("%s capability is not granted", c))
+					}
 				})
 			})
 

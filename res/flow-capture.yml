@@ -64,6 +64,8 @@ spec:
             value: "false"
           - name: ENABLE_IPSEC_TRACKING
             value: "false"
+          - name: ENABLE_SECONDARY_NETWORKS
+            value: "false"
           - name: FLOW_FILTER_RULES
             value: >-
               []
@@ -74,33 +76,3 @@ spec:
           - name: FLP_CONFIG
             value: |
               {}
-        volumeMounts:
-            - name: bpf-kernel-debug
-              mountPath: /sys/kernel/debug
-              mountPropagation: HostToContainer
-            - name: var-run-ovn
-              mountPath: /var/run/ovn
-              mountPropagation: HostToContainer
-            - name: var-run-ovs
-              mountPath: /var/run/openvswitch
-              mountPropagation: HostToContainer
-            - name: var-run-netns
-              mountPath: /var/run/netns
-              mountPropagation: HostToContainer
-      volumes:
-        - name: bpf-kernel-debug
-          hostPath:
-            path: /sys/kernel/debug
-            type: Directory
-        - name: var-run-ovn
-          hostPath:
-            path: /var/run/ovn-ic
-            type: DirectoryOrCreate
-        - name: var-run-ovs
-          hostPath:
-            path: /var/run/openvswitch
-            type: DirectoryOrCreate
-        - name: var-run-netns
-          hostPath:
-            path: /var/run/netns
-            type: Directory
