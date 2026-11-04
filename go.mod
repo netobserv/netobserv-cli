@@ -23,6 +23,7 @@ require (
 
 require (
 	github.com/go-openapi/swag/pools v0.27.1 // indirect
+	github.com/pandatix/go-abnf v0.5.3 // indirect
 	k8s.io/apiserver v0.35.1 // indirect
 	k8s.io/streaming v0.37.1 // indirect
 )
@@ -72,7 +73,7 @@ require (
 	github.com/ovn-org/ovn-kubernetes/go-controller v0.0.0-20250227173154-57a2590a1d16 // indirect
 	github.com/prometheus/client_golang v1.25.0
 	github.com/prometheus/client_model v0.6.3 // indirect
-	github.com/prometheus/common v0.72.1
+	github.com/prometheus/common v0.73.1
 	github.com/prometheus/procfs v0.22.0 // indirect
 	github.com/rivo/tview v0.42.0
 	github.com/rivo/uniseg v0.4.7 // indirect
