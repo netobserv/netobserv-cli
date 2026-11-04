@@ -194,10 +194,12 @@ docs: oc-commands ## Generate asciidoc
 update-config: ## Update config from operator repo
 	./scripts/update-config.sh
 
-.PHONY: release
-release: clean ## Generate tar.gz containing krew plugin
+.PHONY: krew-release
+krew-release: clean ## Generate tar.gz containing krew plugin
 	$(MAKE) KREW_PLUGIN=true kubectl-commands
 	tar -czf netobserv-cli.tar.gz LICENSE ./build/netobserv
+	mkdir -p release-assets
+	mv netobserv-cli.tar.gz release-assets/
 
 .PHONY: create-kind-cluster
 create-kind-cluster: prereqs ## Create a kind cluster
