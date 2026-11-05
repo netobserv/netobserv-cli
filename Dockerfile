@@ -11,23 +11,18 @@ WORKDIR /opt/app-root
 
 COPY cmd cmd
 COPY internal internal
-COPY main.go main.go
 COPY go.mod go.mod
 COPY go.sum go.sum
 COPY vendor/ vendor/
 
-# Build collector
-RUN GOARCH=$TARGETARCH go build -ldflags "$LDFLAGS" -mod vendor -a -o build/network-observability-cli
+# Build the in-pod collector/agent binary
+RUN GOARCH=$TARGETARCH go build -ldflags "$LDFLAGS" -mod vendor -a -o build/network-observability-cli ./cmd/collector
 
-# We still need Makefile & resources for oc-commands; copy them after go build for caching
-COPY commands/ commands/
-COPY res/ res/
-COPY scripts/ scripts/
-COPY Makefile Makefile
-COPY .mk/ .mk/
-
-# Embed commands in case users want to pull it from collector image
-RUN USER=netobserv VERSION=main make oc-commands
+# Also build the client plugin (oc/kubectl-netobserv) and embed it in the image so users without
+# access to the GitHub release/krew can `oc cp` it out of a running pod. internal/plugin/manifests'
+# go:embed'd res/ directory is already present under internal/, copied above.
+RUN CGO_ENABLED=0 GOARCH=$TARGETARCH go build -ldflags "$LDFLAGS" -mod vendor -a -o build/oc-netobserv ./cmd/plugin && \
+    cp build/oc-netobserv build/kubectl-netobserv
 
 # Prepare output dir
 RUN mkdir -p output

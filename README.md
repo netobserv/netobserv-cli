@@ -1,17 +1,16 @@
 # Network Observability CLI
 
-network-observability-cli is a lightweight Flow, Packet and Metrics visualization tool.
-It deploys [NetObserv eBPF agent](https://github.com/netobserv/netobserv-ebpf-agent) on your k8s cluster to collect flows or packets from nodes network interfaces
-and streams data to a local collector for analysis and visualization.
-Output files are generated under `output/flow` and `output/pcap` directories per host name.
+network-observability-cli is a lightweight flow, packet, and metrics visualization tool.
+It deploys the [NetObserv eBPF agent](https://github.com/netobserv/netobserv-ebpf-agent) on your Kubernetes cluster and streams data to a collector for analysis and visualization.
+Flow and packet files are copied to local `output/flow`, `output/pcap`, and (when TLS plaintext capture is enabled) `output/plaintext` directories.
 
-On Openshift environments, you can also capture metrics in your monitoring stack and display a fully configured dashboard.
+On OpenShift environments, you can also capture metrics in the monitoring stack and display a preconfigured dashboard.
 
 ## Prerequisites
 
 To run this CLI, you will need:
-- A running kubernetes / OpenShift cluster
-- either `oc` or `kubectl` command installed and connected to your cluster
+- A running Kubernetes or OpenShift cluster
+- Either `oc` or `kubectl` installed and connected to your cluster
 - Cluster admin rights
 
 ## Getting started with Krew
@@ -25,18 +24,19 @@ To install the NetObserv CLI, run:
 kubectl krew install netobserv
 ```
 
-Or if you had an older version, to update it:
+To update the Krew index and upgrade an existing installation:
 
 ```bash
-kubectl krew update netobserv
+kubectl krew update
+kubectl krew upgrade netobserv
 ```
 
 Then, run it as a `kubectl` plugin, such as:
 
 ```bash
-kubectl netobserv --version
+kubectl netobserv version
 # output example: 
-# NetObserv CLI version v0.0.8
+# NetObserv CLI version main
 ```
 
 You can get detailed help using these commands:
@@ -62,18 +62,17 @@ For instance, to capture all flows on the cluster that go through the `br-ex` ne
 
 - Or from the repository `Makefile`:
 
-  Run the following command to start capturing flows, replacing `USER`, `VERSION` and `COMMAND_ARGS` accordingly:
+  Run the following command to start capturing flows, replacing `IMAGE_ORG`, `VERSION` and `COMMAND_ARGS` accordingly:
 
   ```bash
-  USER=netobserv VERSION=dev COMMAND_ARGS=--interfaces=br-ex make flows
+  IMAGE_ORG=netobserv VERSION=dev COMMAND_ARGS=--interfaces=br-ex make flows
   ```
 
 ![flows](./img/flow-table.png)
 
-It will display a table view with latest flows collected and write data under output/flow directory.
-To stop capturing press Ctrl-C.
+It displays a live table of recently collected flows. By default, the CLI asks whether to copy the capture output locally when the capture ends; use `--copy=true` to enable this without prompting or `--copy=false` to skip it. Press Ctrl-C to stop a foreground capture.
 
-This will write data into two separate files:
+When copied, a flow capture produces two files:
 - `./output/flow/<CAPTURE_DATE_TIME>.json` containing json array of received data such as:
 ```json
 {
@@ -135,16 +134,15 @@ For instance, to capture all TCP packets on the cluster that go through port 80:
 
 - Or from the repository `Makefile`:
 
-  Run the following command to start capturing packets, replacing `USER`, `VERSION` and `COMMAND_ARGS` accordingly:
+  Run the following command to start capturing packets, replacing `IMAGE_ORG`, `VERSION` and `COMMAND_ARGS` accordingly:
 
   ```bash
-  USER=netobserv VERSION=dev COMMAND_ARGS="--protocol=TCP --port=80" make packets
+  IMAGE_ORG=netobserv VERSION=dev COMMAND_ARGS="--protocol=TCP --port=80" make packets
   ```
 
-Similarly to flow capture, it will display a table view with latest flows. However, it will collect packets and write data under output/pcap directory.
-To stop capturing press Ctrl-C.
+It displays a live packet table while collecting packets. To stop a foreground capture, press Ctrl-C. Packet capture requires at least one filter; this avoids an unbounded capture.
 
-This will write [pcapng](https://wiki.wireshark.org/Development/PcapNg) into a single file located in `./output/pcap/<CAPTURE_DATE_TIME>.pcapng` that can be opened with Wireshark for example:
+When copied, the capture writes a [pcapng](https://wiki.wireshark.org/Development/PcapNg) file to `./output/pcap/<CAPTURE_DATE_TIME>.pcapng`, which can be opened with Wireshark:
 
 ![wireshark](./img/wireshark.png)
 
@@ -159,7 +157,7 @@ plaintext-to-packet byte mapping.
 
 ### Metrics dashboard (OpenShift only)
 
-For instance, to capture many available metrics, including Packet drops, DNS stats and latenties:
+For instance, to capture metrics including packet drops, DNS statistics, and TCP RTT:
 
 - As a `kubectl` plugin:
 
@@ -167,18 +165,15 @@ For instance, to capture many available metrics, including Packet drops, DNS sta
   kubectl netobserv metrics --enable_pkt_drop --enable_dns --enable_rtt
   ```
 
-- Or from the repository `Makefile`:
-
-  Run the following command to start capturing metrics, replacing `USER`, `VERSION` and `COMMAND_ARGS` accordingly:
+- Or from a locally built plugin:
 
   ```bash
-  USER=netobserv VERSION=dev COMMAND_ARGS='--enable_pkt_drop --enable_dns --enable_rtt' make metrics
+  ./build/oc-netobserv metrics --enable_pkt_drop --enable_dns --enable_rtt
   ```
 
 ![metrics](./img/metrics-dashboard.png)
 
-It will generate a monitoring dashboard called "NetObserv / On Demand" in your Openshift cluster.
-The url to access it is automatically generated from the CLI. Simply click on the link to open the page.
+It generates a monitoring dashboard called `NetObserv / On Demand` in your OpenShift cluster and prints its URL.
 
 ### Cleanup
 
@@ -193,33 +188,80 @@ The `cleanup` function will automatically remove the eBPF programs when the CLI 
 - Or from the repository `Makefile`:
 
   ```bash
-  USER=netobserv VERSION=dev make cleanup
+  IMAGE_ORG=netobserv VERSION=dev make cleanup
   ```
 
 ## Build
 
-To build the project locally:
+To check and build both project binaries locally:
 
-### Install `shellcheck` package
-
-```bash
-sudo dnf install -y shellcheck
-```
-
-### Build the project
+### Build collector and plugin
 
 ```bash
 make build
 ```
 
-This will also copy resources and commands to the `build` directory.
+This formats and lints the repository, refreshes the vendor directory, and builds both the collector (`build/network-observability-cli`) and the client plugin.
+
+To build only one binary:
+
+```bash
+make build-collector              # build/network-observability-cli
+make build-plugin K8S_CLI_BIN=oc  # build/oc-netobserv
+```
+
+### Build the client plugin
+
+```bash
+make oc-commands       # or: make kubectl-commands
+```
+
+These compatibility targets build the `oc-netobserv`/`kubectl-netobserv` client plugin binary into the `build` directory. `make commands` remains available for CI and scripts.
+
+### Regenerate the CLI reference
+
+The AsciiDoc command reference is generated from the live Cobra command tree:
+
+```bash
+make docs
+```
+
+### Tests
+
+Run the unit tests and generate `cover.out` with:
+
+```bash
+make test
+```
+
+Cluster integration tests are separate and require a configured cluster and an installed `oc-netobserv` binary:
+
+```bash
+KUBECONFIG=/path/to/kubeconfig make tests-int
+```
 
 ### Images
 
-To build your own images of CLI, run the following command replacing `USER` and `VERSION` accordingly:
+To build your own CLI image, run the following command replacing `IMAGE_ORG` and `VERSION` accordingly:
 ```bash
-USER=netobserv VERSION=dev make images
+IMAGE_ORG=netobserv VERSION=dev make images
 ```
+
+`make images` builds one collector image per `MULTIARCH_TARGETS` architecture and publishes a manifest. Local builds default to `amd64`; use `MULTIARCH_TARGETS="amd64 arm64"` for a multi-architecture build. The release workflows additionally build `ppc64le` and `s390x`.
+
+### Krew release artifacts
+
+Krew releases contain one client plugin archive per supported operating system and architecture:
+
+```bash
+make release
+# release-assets/netobserv-cli-<VERSION>-linux-amd64.tar.gz
+# release-assets/netobserv-cli-<VERSION>-linux-arm64.tar.gz
+# release-assets/netobserv-cli-<VERSION>-darwin-amd64.tar.gz
+# release-assets/netobserv-cli-<VERSION>-darwin-arm64.tar.gz
+```
+
+The plugin is cross-compiled with `CGO_ENABLED=0`; the collector remains in the multi-architecture container image.
 
 ## Extending OpenShift or Kubernetes CLI with plugins
 

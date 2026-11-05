@@ -59,15 +59,15 @@ undeploy:
 	$(K8S_CLI_BIN) delete -f traffic-job.yaml --ignore-not-found
 
 .PHONY: traffic
-traffic:
+traffic: wait
 	$(K8S_CLI_BIN) apply -f traffic-job.yaml
 
 .PHONY: wait
 wait:
-	$(K8S_CLI_BIN) wait -n $(NAMESPACE) deployment/http-test --for=condition=Available --timeout=120s
+	$(K8S_CLI_BIN) wait -n $(NAMESPACE) deployment/http-test --for=condition=Available --timeout=120s >/dev/null
 
 .PHONY: pod-ip
-pod-ip:
+pod-ip: wait
 	@$(K8S_CLI_BIN) get pod -n $(NAMESPACE) -l app=http-test -o jsonpath='{.items[0].status.podIP}{"\n"}'
 
 .PHONY: help
