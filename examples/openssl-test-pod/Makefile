@@ -64,15 +64,15 @@ undeploy: ## Delete test namespace and traffic job
 	$(K8S_CLI_BIN) delete -f traffic-job.yaml --ignore-not-found
 
 .PHONY: traffic
-traffic: ## Start curl Job against the service
+traffic: wait ## Start curl Job against the service
 	$(K8S_CLI_BIN) apply -f traffic-job.yaml
 
 .PHONY: wait
 wait: ## Wait for deployment Available
-	$(K8S_CLI_BIN) wait -n $(NAMESPACE) deployment/openssl-test --for=condition=Available --timeout=120s
+	$(K8S_CLI_BIN) wait -n $(NAMESPACE) deployment/openssl-test --for=condition=Available --timeout=120s >/dev/null
 
 .PHONY: pod-ip
-pod-ip: ## Print pod IP for --peer_ip
+pod-ip: wait ## Print pod IP for --peer_ip
 	@$(K8S_CLI_BIN) get pod -n $(NAMESPACE) -l app=openssl-test -o jsonpath='{.items[0].status.podIP}{"\n"}'
 
 .PHONY: help

@@ -55,5 +55,5 @@ jobs:
           name: ${{ env.tag }}
           draft: true
           prerelease: false
-          files: netobserv-cli.tar.gz
+          files: release-assets/*.tar.gz
           body: Edit to remove this content, click on 'generate release notes' above and publish. It will trigger the krew-release-bot.
