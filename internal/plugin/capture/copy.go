@@ -152,39 +152,3 @@ func isWithinDir(dir, target string) bool {
 	target = filepath.Clean(target)
 	return target == dir || strings.HasPrefix(target, dir+string(os.PathSeparator))
 }
-
-// BuildJSON replaces buildJSON: converts the collector's flow-log text dump (one JSON object per
-// line, each followed by a trailing comma) into a valid JSON array file. The very last line is
-// always dropped rather than just having its comma stripped, matching bash: a capture that hits
-// its time/byte limit or gets interrupted may have written a partial last entry, so it is
-// discarded rather than risk emitting invalid JSON.
-func BuildJSON(txtPath string) (jsonPath string, err error) {
-	data, err := os.ReadFile(txtPath)
-	if err != nil {
-		return "", fmt.Errorf("cannot read %s: %w", txtPath, err)
-	}
-
-	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	if len(lines) > 0 {
-		lines = lines[:len(lines)-1]
-	}
-	if len(lines) > 0 {
-		lines[len(lines)-1] = strings.TrimSuffix(lines[len(lines)-1], ",")
-	}
-
-	ext := filepath.Ext(txtPath)
-	jsonPath = strings.TrimSuffix(txtPath, ext) + ".json"
-
-	var buf strings.Builder
-	buf.WriteString("[\n")
-	for _, line := range lines {
-		buf.WriteString(line)
-		buf.WriteString("\n")
-	}
-	buf.WriteString("]\n")
-
-	if err := os.WriteFile(jsonPath, []byte(buf.String()), 0o644); err != nil {
-		return "", fmt.Errorf("cannot write %s: %w", jsonPath, err)
-	}
-	return jsonPath, nil
-}

@@ -118,6 +118,7 @@ func startPacketCollectorReady(ready chan<- struct{}) { //nolint:cyclop
 	}
 	defer ngw.Flush()
 	packetWriter := collectorpacket.NewWriter(ngw, packetOutput.Mutex())
+	packetWriter.SetWriteObserver(func(n int) { recordOutput("pcap", n) })
 
 	// Register the writer so a SIGTERM can flush buffered packets before the
 	// process exits; without this the last buffered packet(s) are lost and the
@@ -161,8 +162,10 @@ func startPacketCollectorReady(ready chan<- struct{}) { //nolint:cyclop
 		wireBuf = collectorpacket.NewWireBuffer(collectorpacket.CorrelationWindow, func(m config.GenericMap) {
 			collectorformat.EnrichPlaintextForExport(&m)
 			if plaintextLog != nil {
-				if err := collectorformat.WriteJSONLine(plaintextLog, m); err != nil {
+				countingLog := outputCountingWriter{writer: plaintextLog, count: recordPlaintextOutput}
+				if err := collectorformat.WriteJSONLine(countingLog, m); err != nil {
 					log.Error("plaintext json write", err)
+					recordOutputError("plaintext")
 				}
 			}
 		}, collectorpacket.ParseFilters(options), func(m *config.GenericMap, data []byte, comments []string, packetID *uint64) error {
@@ -210,6 +213,7 @@ func startPacketCollectorReady(ready chan<- struct{}) { //nolint:cyclop
 		genericMap := config.GenericMap{}
 		if err := json.Unmarshal(fp.GenericMap.Value, &genericMap); err != nil {
 			log.Error("Error while parsing json", err)
+			recordOutputError("collector")
 			continue
 		}
 		handlePacketRecord(packetWriter, genericMap, wireBuf, plaintextLog)

@@ -3,6 +3,7 @@ package collector
 import (
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jpillora/sizestr"
@@ -10,6 +11,7 @@ import (
 	"github.com/netobserv/flowlogs-pipeline/pkg/pipeline/utils"
 	"github.com/netobserv/flowlogs-pipeline/pkg/pipeline/write/grpc"
 	"github.com/netobserv/flowlogs-pipeline/pkg/pipeline/write/grpc/genericmap"
+	sharedcapture "github.com/netobserv/netobserv-operator/pkg/capture"
 	"github.com/spf13/cobra"
 
 	collectorfiles "github.com/netobserv/network-observability-cli/internal/collector/files"
@@ -47,13 +49,6 @@ func runFlowCapture(_ *cobra.Command, _ []string) {
 
 func startFlowCollector() {
 	utils.InitExitChannel()
-	var limitTimer *time.Timer
-	if isBackground {
-		limitTimer = time.AfterFunc(maxTime, func() {
-			onLimitReached()
-		})
-		defer limitTimer.Stop()
-	}
 	if len(filename) > 0 {
 		log.Debugf("Starting Flow Capture for %s...", filename)
 	} else {
@@ -63,14 +58,35 @@ func startFlowCollector() {
 			":", "") // get rid of offensive colons
 	}
 
-	// Create a text file to receive json chunks; the file will be fixed and renamed as json later, when pulled in shell.
-	f, err := collectorfiles.CreateCapture("flow", filename+".txt")
+	// Stream flow records directly into a JSON array. The writer keeps the file
+	// readable while the capture runs and finalizes the array on return.
+	f, err := collectorfiles.CreateCapture("flow", filename+".json")
 	if err != nil {
 		log.Errorf("Creating output file failed: %v", err)
 		return
 	}
 	defer f.Close()
-	log.Debugf("Created flow logs txt file: %s", f.Name())
+	flowWriter := sharedcapture.NewJSONWriter(f)
+	var outputMu sync.Mutex
+	finalizeOutput := func() {
+		outputMu.Lock()
+		defer outputMu.Unlock()
+		if err := flowWriter.Close(); err != nil {
+			log.Errorf("Closing flow JSON file failed: %v", err)
+		}
+	}
+	setCaptureOutputFinalizer(finalizeOutput)
+	defer setCaptureOutputFinalizer(nil)
+	defer func() {
+		finalizeOutput()
+	}()
+	log.Debugf("Created flow logs JSON file: %s", f.Name())
+
+	var limitTimer *time.Timer
+	if isBackground {
+		limitTimer = time.AfterFunc(maxTime, func() { onLimitReached() })
+		defer limitTimer.Stop()
+	}
 
 	// Initialize sqlite DB
 	dbPath := filepath.Join(filepath.Dir(f.Name()), filename+".db")
@@ -105,6 +121,9 @@ func startFlowCollector() {
 
 	log.Debug("Ready ! Waiting for flows...")
 	for fp := range flowPackets {
+		if captureEnded {
+			continue
+		}
 		if !captureStarted {
 			log.Debugf("Received first %d flows", len(flowPackets))
 		}
@@ -125,12 +144,18 @@ func startFlowCollector() {
 			log.Debug("Wrote flows to DB")
 		}
 
-		// append new line between each record to read file easilly
-		bytes, err := f.Write(append(fp.GenericMap.Value, []byte(",\n")...))
+		outputMu.Lock()
+		bytes, err := flowWriter.WriteJSON(fp.GenericMap.Value)
+		if err == nil {
+			err = flowWriter.Flush()
+		}
+		outputMu.Unlock()
 		if err != nil {
 			log.Error(err)
+			recordOutputError("flow")
 			return
 		}
+		recordOutput("flows", bytes)
 		if !captureStarted {
 			log.Debug("Wrote flows to json")
 		}

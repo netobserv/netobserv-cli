@@ -152,6 +152,7 @@ func initializeCollector() {
 		isBackground = true
 		log.Infof("Running in background mode")
 	}
+	startOutputMetricsServer()
 	showKernelVersion()
 
 	if useMocks {

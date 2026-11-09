@@ -15,6 +15,14 @@ The recommended model is:
 3. The operator and CLI can share stable, deployment-neutral builders hosted in the operator repository, without sharing the `FlowCapture` API or controller lifecycle.
 4. Operator reconciliation, status management, ownership, cleanup, and CLI interaction remain repository-specific.
 
+The public package `github.com/netobserv/netobserv-operator/pkg/capture` also provides the
+streaming `JSONWriter` used for flow output. Consumers create it with
+`capture.NewJSONWriter(io.Writer)`, append records with `Write(record)`, call `Flush()` when
+partial output should be visible, and call `Close()` to finalize the JSON array. Use
+`WriteJSON([]byte)` when the record is already serialized. This keeps the
+console backend independent of CLI `internal` packages and gives FlowCapture and direct CLI
+captures the same JSON format.
+
 This gives the operator a supported API without turning the CLI into a dependency of the operator or duplicating the entire operator implementation in the CLI.
 
 ## What exists today

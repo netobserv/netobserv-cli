@@ -73,8 +73,9 @@ For instance, to capture all flows on the cluster that go through the `br-ex` ne
 It displays a live table of recently collected flows. By default, the CLI asks whether to copy the capture output locally when the capture ends; use `--copy=true` to enable this without prompting or `--copy=false` to skip it. Press Ctrl-C to stop a foreground capture.
 
 When copied, a flow capture produces two files:
-- `./output/flow/<CAPTURE_DATE_TIME>.json` containing json array of received data such as:
+- `./output/flow/<CAPTURE_DATE_TIME>.json` containing a streamed JSON array of received data such as:
 ```json
+[
 {
   "AgentIP": "10.0.1.76",
   "Bytes": 561,
@@ -100,6 +101,7 @@ When copied, a flow capture produces two files:
   "TimeFlowStartMs": 1709741962111,
   "TimeReceived": 1709741964
 }
+]
 ```
 - `./output/flow/<CAPTURE_DATE_TIME>.db` database that can be inspected using `sqlite3` for example: 
 ```bash

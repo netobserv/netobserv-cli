@@ -16,11 +16,14 @@ import (
 
 // Writer serializes flow records into a pcapng stream.
 type Writer struct {
-	mu  *sync.Mutex
-	ngw *pcapgo.NgWriter
+	mu      *sync.Mutex
+	ngw     *pcapgo.NgWriter
+	onWrite func(int)
 }
 
 func NewWriter(ngw *pcapgo.NgWriter, mu *sync.Mutex) *Writer { return &Writer{ngw: ngw, mu: mu} }
+
+func (w *Writer) SetWriteObserver(observer func(int)) { w.onWrite = observer }
 
 func (w *Writer) Write(record *config.GenericMap) error {
 	value, ok := (*record)["Data"].(string)
@@ -40,9 +43,13 @@ func (w *Writer) WriteData(record *config.GenericMap, data []byte, extraComments
 	options := pcapgo.NgPacketOptions{Comments: comments, PacketID: packetID}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.ngw.WritePacketWithOptions(gopacket.CaptureInfo{
+	err := w.ngw.WritePacketWithOptions(gopacket.CaptureInfo{
 		Timestamp: packetTimestamp(*record), Length: len(data), CaptureLength: len(data),
 	}, data, options)
+	if err == nil && w.onWrite != nil {
+		w.onWrite(len(data))
+	}
+	return err
 }
 
 func commentsFor(record config.GenericMap) []string {

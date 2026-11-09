@@ -23,17 +23,14 @@ import (
 // stdin is overridden in tests so promptYesNo doesn't block on the real terminal.
 var stdin io.Reader = os.Stdin
 
-// newestTxtFile replaces `find ./output -name "*txt" | sort | tail -1`: a recursive search (the
-// collector writes its flow/packet dumps into an output/flow/ or output/pcap/ subdirectory, not
-// directly under output/), returning the lexicographically-last match (collector filenames are
-// timestamp-prefixed, so that's also the most recent one).
-func newestTxtFile(dir string) (string, error) {
+// newestJSONFile finds the newest native JSON flow output recursively.
+func newestJSONFile(dir string) (string, error) {
 	var names []string
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if !d.IsDir() && filepath.Ext(d.Name()) == ".txt" {
+		if !d.IsDir() && filepath.Ext(d.Name()) == ".json" {
 			names = append(names, path)
 		}
 		return nil
@@ -149,21 +146,18 @@ func onCaptureExit(ctx context.Context, client *k8sclient.Client, namespace stri
 	return capture.Cleanup(ctx, client, namespace, out)
 }
 
-// doCopy replaces copyOutput: copy the collector's /output directory locally, then convert the
-// newest flow-log text dump into JSON (see capture.BuildJSON for why the last line is dropped).
+// doCopy replaces copyOutput: copy the collector's /output directory locally.
 func doCopy(ctx context.Context, client *k8sclient.Client, namespace string, out io.Writer) error {
 	fmt.Fprintln(out, "Copying collector files to ./output...")
 	if err := capture.CopyFromPod(ctx, client, namespace, capture.CollectorPodName, "/output", "./output", out); err != nil {
 		return err
 	}
-	flowFile, err := newestTxtFile("./output")
-	if err != nil || flowFile == "" {
-		return nil //nolint:nilerr // no .txt dump present (e.g. a metrics capture) is not an error
+	if flowFile, err := newestJSONFile("./output"); err != nil || flowFile == "" {
+		return nil //nolint:nilerr // no flow dump present (e.g. a metrics capture) is not an error
 	}
-	if _, err := capture.BuildJSON(flowFile); err != nil {
-		return err
-	}
-	return os.Remove(flowFile)
+	// The collector already writes the final JSON array; copying does not need
+	// a conversion step.
+	return nil
 }
 
 // promptYesNo replaces cleanup()'s `read -rp "... [yes/no] "` loop: EOF (non-interactive stdin,

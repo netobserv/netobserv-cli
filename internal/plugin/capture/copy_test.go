@@ -18,14 +18,14 @@ func TestExtractTarWritesFilesAndDirs(t *testing.T) {
 	tw := tar.NewWriter(&buf)
 	require.NoError(t, tw.WriteHeader(&tar.Header{Name: "sub", Typeflag: tar.TypeDir, Mode: 0o755}))
 	content := []byte("hello flows\n")
-	require.NoError(t, tw.WriteHeader(&tar.Header{Name: "sub/flows.txt", Typeflag: tar.TypeReg, Size: int64(len(content)), Mode: 0o644}))
+	require.NoError(t, tw.WriteHeader(&tar.Header{Name: "sub/flows.json", Typeflag: tar.TypeReg, Size: int64(len(content)), Mode: 0o644}))
 	_, err := tw.Write(content)
 	require.NoError(t, err)
 	require.NoError(t, tw.Close())
 
 	require.NoError(t, extractTar(&buf, dest))
 
-	got, err := os.ReadFile(filepath.Join(dest, "sub", "flows.txt"))
+	got, err := os.ReadFile(filepath.Join(dest, "sub", "flows.json"))
 	require.NoError(t, err)
 	assert.Equal(t, content, got)
 }
@@ -65,22 +65,4 @@ func TestFormatBytes(t *testing.T) {
 	assert.Equal(t, "512 B", formatBytes(512))
 	assert.Equal(t, "1.0 KB", formatBytes(1024))
 	assert.Equal(t, "1.0 MB", formatBytes(1024*1024))
-}
-
-func TestBuildJSONDropsPossiblyIncompleteLastLineAndStripsComma(t *testing.T) {
-	dir := t.TempDir()
-	txtPath := filepath.Join(dir, "flows_capture_2024.txt")
-	content := `{"a":1},
-{"a":2},
-{"a":3
-`
-	require.NoError(t, os.WriteFile(txtPath, []byte(content), 0o644))
-
-	jsonPath, err := BuildJSON(txtPath)
-	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(dir, "flows_capture_2024.json"), jsonPath)
-
-	got, err := os.ReadFile(jsonPath)
-	require.NoError(t, err)
-	assert.Equal(t, "[\n{\"a\":1},\n{\"a\":2}\n]\n", string(got))
 }
