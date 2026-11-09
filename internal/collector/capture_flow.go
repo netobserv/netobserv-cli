@@ -47,7 +47,7 @@ func runFlowCapture(_ *cobra.Command, _ []string) {
 	createFlowDisplay()
 }
 
-func startFlowCollector() {
+func startFlowCollector() { //nolint:cyclop
 	utils.InitExitChannel()
 	if len(filename) > 0 {
 		log.Debugf("Starting Flow Capture for %s...", filename)
