@@ -207,7 +207,7 @@ github.com/netobserv/flowlogs-pipeline/pkg/tlsprofile
 github.com/netobserv/netobserv-ebpf-agent/pkg/config
 github.com/netobserv/netobserv-ebpf-agent/pkg/utils
 github.com/netobserv/netobserv-ebpf-agent/pkg/utils/networkevents
-# github.com/netobserv/netobserv-operator v0.0.0-20261023144739-03cf0f2ef289 => github.com/jpinsonneau/network-observability-operator v0.0.0-20261104152758-c2154cf3ea16
+# github.com/netobserv/netobserv-operator v0.0.0-20261023144739-03cf0f2ef289 => github.com/jpinsonneau/network-observability-operator v0.0.0-20261109165018-8b5d3142fa7d
 ## explicit; go 1.26.7
 github.com/netobserv/netobserv-operator/api/flowcapture/v1alpha1
 github.com/netobserv/netobserv-operator/internal/pkg/tlsconfig
@@ -1187,5 +1187,5 @@ sigs.k8s.io/structured-merge-diff/v6/value
 # sigs.k8s.io/yaml v1.6.0
 ## explicit; go 1.22
 sigs.k8s.io/yaml
-# github.com/netobserv/netobserv-operator => github.com/jpinsonneau/network-observability-operator v0.0.0-20261104152758-c2154cf3ea16
+# github.com/netobserv/netobserv-operator => github.com/jpinsonneau/network-observability-operator v0.0.0-20261109165018-8b5d3142fa7d
 # github.com/netobserv/flowlogs-pipeline => github.com/netobserv/flowlogs-pipeline v1.12.0-community.0.20261102164255-c6720ac3acbd

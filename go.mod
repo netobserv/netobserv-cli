@@ -23,7 +23,7 @@ require (
 
 // Use the operator PR until the shared package is released from the canonical
 // repository; this replacement can then be removed in favor of that release.
-replace github.com/netobserv/netobserv-operator => github.com/jpinsonneau/network-observability-operator v0.0.0-20261104152758-c2154cf3ea16
+replace github.com/netobserv/netobserv-operator => github.com/jpinsonneau/network-observability-operator v0.0.0-20261109165018-8b5d3142fa7d
 
 // Use the race-free collector shutdown until the fix is merged upstream.
 replace github.com/netobserv/flowlogs-pipeline => github.com/netobserv/flowlogs-pipeline v1.12.0-community.0.20261102164255-c6720ac3acbd

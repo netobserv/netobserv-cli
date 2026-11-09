@@ -10,6 +10,12 @@ import (
 	"github.com/netobserv/network-observability-cli/internal/collector/cleanup"
 )
 
+var captureOutputFinalizer func()
+
+func setCaptureOutputFinalizer(finalizer func()) {
+	captureOutputFinalizer = finalizer
+}
+
 func printBanner() {
 	fmt.Print(`
 ------------------------------------------------------------------------
@@ -57,6 +63,9 @@ func onLimitReached() bool {
 		fmt.Print("\n\n  - Open NetObserv / On Demand dashboard to see generated metrics\n\n\t- Once finished, remove everything using 'oc netobserv cleanup'\n\n                                                      See you soon !\n")
 	} else {
 		fmt.Print("\n\n\t- Download the generated output using 'oc netobserv copy' command\n\n\t- Once finished, clean the collector pod using 'oc netobserv cleanup'\n\n                                                      See you soon !\n")
+	}
+	if captureOutputFinalizer != nil {
+		captureOutputFinalizer()
 	}
 	markManagedCaptureCompleted()
 	if utils.ExitChannel() != nil {
