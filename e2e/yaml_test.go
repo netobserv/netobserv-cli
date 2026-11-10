@@ -298,8 +298,6 @@ func TestAgentPrivilegesYAML(t *testing.T) {
 	origDir, err := os.Getwd()
 	assert.Nil(t, err)
 
-	allHostPaths := []string{"bpf-kernel-debug", "var-run-ovn", "var-run-ovs", "var-run-netns"}
-
 	tests := []struct {
 		name string
 		args []string
@@ -310,37 +308,37 @@ func TestAgentPrivilegesYAML(t *testing.T) {
 		{
 			name:       "no feature",
 			args:       []string{"flows"},
-			expected:   append([]string{`privileged: false`, "BPF", "PERFMON", "NET_ADMIN"}, allHostPaths...),
+			expected:   []string{`privileged: false`, "BPF", "PERFMON", "NET_ADMIN"},
 			unexpected: []string{"SYS_ADMIN", "SYS_PTRACE"},
 		},
 		{
 			name:       "packet drops enable privilege",
 			args:       []string{"flows", "--enable_pkt_drop"},
-			expected:   append([]string{`privileged: true`, "ENABLE_PKT_DROPS"}, allHostPaths...),
+			expected:   []string{`privileged: true`, "ENABLE_PKT_DROPS"},
 			unexpected: []string{"SYS_ADMIN", "SYS_PTRACE"},
 		},
 		{
 			name:       "network events enable privilege",
 			args:       []string{"flows", "--enable_network_events"},
-			expected:   append([]string{`privileged: true`, "ENABLE_NETWORK_EVENTS_MONITORING"}, allHostPaths...),
+			expected:   []string{`privileged: true`, "ENABLE_NETWORK_EVENTS_MONITORING"},
 			unexpected: []string{"SYS_ADMIN", "SYS_PTRACE"},
 		},
 		{
 			name:       "UDN mapping enables privilege",
 			args:       []string{"flows", "--enable_udn_mapping"},
-			expected:   append([]string{`privileged: true`, "ENABLE_UDN_MAPPING"}, allHostPaths...),
+			expected:   []string{`privileged: true`, "ENABLE_UDN_MAPPING"},
 			unexpected: []string{"SYS_ADMIN", "SYS_PTRACE"},
 		},
 		{
 			name:       "privileged implies secondary networks",
 			args:       []string{"flows", "--privileged"},
-			expected:   append([]string{`privileged: true`}, allHostPaths...),
+			expected:   []string{`privileged: true`},
 			unexpected: []string{"ENABLE_SECONDARY_NETWORKS"},
 		},
 		{
 			name:       "all features enable privilege",
 			args:       []string{"flows", "--enable_all"},
-			expected:   append([]string{`privileged: true`}, allHostPaths...),
+			expected:   []string{`privileged: true`},
 			unexpected: []string{},
 		},
 	}
