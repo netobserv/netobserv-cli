@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"runtime"
 	"testing"
 	"time"
 
+	"github.com/netobserv/network-observability-cli/internal/k8s/kindconfig"
 	"github.com/sirupsen/logrus"
 	"github.com/vladimirvivien/gexe"
 	"sigs.k8s.io/e2e-framework/pkg/env"
@@ -20,6 +20,8 @@ import (
 const (
 	cliContainerName = "localhost/netobserv-cli:test"
 	kindImage        = "kindest/node:v1.31.0"
+	kindCreateTries  = 3
+	kindRetryDelay   = time.Second
 	logsSubDir       = "e2e-logs"
 	localArchiveName = "cli-e2e-img.tar"
 )
@@ -56,12 +58,14 @@ func NewKind(kindClusterName, baseDir string, options ...Option) *Kind {
 
 // Run the Kind cluster for the later execution of tests.
 func (k *Kind) Run(m *testing.M) {
+	configPath, err := kindconfig.WriteTemp(kindconfig.E2E())
+	if err != nil {
+		panic(err)
+	}
+	defer os.Remove(configPath)
+
 	envFuncs := []env.Func{
-		envfuncs.CreateClusterWithConfig(
-			kind.NewProvider(),
-			k.clusterName,
-			path.Join(packageDir(), "res", "kind.yaml"),
-			kind.WithImage(kindImage)),
+		k.createCluster(configPath),
 		k.loadLocalImage(),
 	}
 	klog.Info("starting kind setup")
@@ -72,6 +76,39 @@ func (k *Kind) Run(m *testing.M) {
 			envfuncs.DestroyCluster(k.clusterName),
 		).Run(m)
 	klog.WithField("returnCode", code).Info("tests finished run")
+}
+
+// createCluster retries the provider's creation step because kind's Docker provider can race
+// with systemd's boot log: the node is healthy, but kind may start watching its logs after the
+// "Multi-User System" line was emitted. A bounded retry handles that transient startup race
+// without hiding genuine cluster creation failures.
+func (k *Kind) createCluster(configPath string) env.Func {
+	create := envfuncs.CreateClusterWithConfig(
+		kind.NewProvider(),
+		k.clusterName,
+		configPath,
+		kind.WithImage(kindImage))
+
+	return func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+		var lastErr error
+		for attempt := 1; attempt <= kindCreateTries; attempt++ {
+			createdCtx, err := create(ctx, cfg)
+			if err == nil {
+				return createdCtx, nil
+			}
+			lastErr = err
+			if attempt == kindCreateTries {
+				break
+			}
+			klog.WithError(err).WithField("attempt", attempt).Warn("kind cluster creation failed; retrying")
+			select {
+			case <-ctx.Done():
+				return ctx, ctx.Err()
+			case <-time.After(kindRetryDelay):
+			}
+		}
+		return ctx, fmt.Errorf("kind cluster creation failed after %d attempts: %w", kindCreateTries, lastErr)
+	}
 }
 
 func (k *Kind) GetLogsDir() string {
@@ -94,7 +131,7 @@ func (k *Kind) exportLogs() env.Func {
 
 		// move output files to cluster logs folder
 		err := os.Rename(path.Join(k.baseDir, "e2e", "tmp"), path.Join(logsDir, "output"))
-		if err != nil {
+		if err != nil && !os.IsNotExist(err) {
 			klog.Error(err)
 		}
 
@@ -104,8 +141,9 @@ func (k *Kind) exportLogs() env.Func {
 
 func (k *Kind) GetAgentLogs() string {
 	exe := gexe.New()
-	contextOut := exe.Run("kubectl cluster-info --context " + k.clusterName)
-	logsOut := exe.Run("kubectl logs -l app=netobserv-cli -n netobserv-cli --tail -1")
+	kubeContext := "kind-" + k.clusterName
+	contextOut := exe.Run("kubectl cluster-info --context " + kubeContext)
+	logsOut := exe.Run("kubectl logs --context " + kubeContext + " -l app=netobserv-cli -n netobserv-cli --tail -1")
 
 	return fmt.Sprintf("Set context: %s\n\nLogs: %s", contextOut, logsOut)
 }
@@ -114,7 +152,7 @@ func (k *Kind) GetAgentLogs() string {
 func (k *Kind) deleteNamespace() env.Func {
 	return func(ctx context.Context, _ *envconf.Config) (context.Context, error) {
 		exe := gexe.New()
-		out := exe.Run("kubectl delete namespace netobserv-cli")
+		out := exe.Run("kubectl delete namespace netobserv-cli --ignore-not-found --context kind-" + k.clusterName)
 		klog.WithField("out", out).Info("deleted namespace")
 		return ctx, nil
 	}
@@ -145,14 +183,4 @@ func (k *Kind) loadLocalImage() env.Func {
 		}
 		return ctx, err
 	}
-}
-
-// helper to get the base directory of this package, allowing to load the test deployment
-// files whatever the working directory is
-func packageDir() string {
-	_, file, _, ok := runtime.Caller(1)
-	if !ok {
-		panic("can't find package directory for (project_dir)/test/cluster")
-	}
-	return path.Dir(file)
 }

@@ -57,8 +57,8 @@ jobs:
       - name: build and push manifest with images
         run: MULTIARCH_TARGETS="${WF_MULTIARCH_TARGETS}" IMAGE_ORG=${WF_ORG} VERSION=${tag} CLEAN_BUILD=1 make images
 
-      - name: build krew plugin artifact
-        run: IMAGE_ORG=${{ env.WF_ORG }} VERSION=${{ env.tag }} make krew-release
+      - name: build krew plugin artifacts
+        run: IMAGE_ORG=${{ env.WF_ORG }} VERSION=${{ env.tag }} make release
 
       - name: capture image digest
         id: image_digest
